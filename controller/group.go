@@ -47,7 +47,17 @@ func GetUserGroups(c *gin.Context) {
 		return
 	}
 
-	if ratio_setting.ContainsGroupRatio(userGroup) {
+	if c.GetInt("role") >= common.RoleAdminUser {
+		allowedGroups := service.GetUserUsableGroups(userGroup)
+		for groupName := range ratio_setting.GetGroupRatioCopy() {
+			if desc, ok := allowedGroups[groupName]; ok {
+				usableGroups[groupName] = map[string]any{
+					"ratio": service.GetUserGroupRatio(userGroup, groupName),
+					"desc":  desc,
+				}
+			}
+		}
+	} else if ratio_setting.ContainsGroupRatio(userGroup) {
 		usableGroups[userGroup] = map[string]any{
 			"ratio": service.GetUserGroupRatio(userGroup, userGroup),
 			"desc":  setting.GetUsableGroupDescription(userGroup),
@@ -77,6 +87,9 @@ func normalizeTokenGroupForCurrentUser(c *gin.Context, tokenGroup string) (strin
 		return userGroup, nil
 	}
 	if tokenGroup == "auto" {
+		return tokenGroup, nil
+	}
+	if c.GetInt("role") >= common.RoleAdminUser && service.IsUserSelectableGroup(userGroup, tokenGroup) {
 		return tokenGroup, nil
 	}
 	if tokenGroup != userGroup {

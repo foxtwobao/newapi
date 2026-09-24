@@ -18,6 +18,8 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -552,6 +554,55 @@ func TestGetUserGroupsOnlyReturnsCurrentUserGroup(t *testing.T) {
 	assert.Contains(t, groups, "vip")
 	assert.NotContains(t, groups, "default")
 	assert.Len(t, groups, 1)
+}
+
+func TestAdminCanCreateTokenInConfiguredGroupWithoutOwnGroupRatio(t *testing.T) {
+	originalRatios := ratio_setting.GroupRatio2JSONString()
+	originalUsableGroups := setting.UserUsableGroups2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"LD":1,"YJ":1,"CCPG":1}`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"LD":"LD","YJ":"YJ","CCPG":"CCPG"}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalRatios))
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUsableGroups))
+	})
+
+	db := setupTokenAndUserControllerTestDB(t)
+	user := seedUser(t, db, 1, "default")
+	require.NoError(t, db.Model(user).Update("role", common.RoleRootUser).Error)
+
+	groupsCtx, groupsRecorder := newAuthenticatedContext(t, http.MethodGet, "/api/user/self/groups", nil, user.Id)
+	groupsCtx.Set("role", common.RoleRootUser)
+	GetUserGroups(groupsCtx)
+	groupsResponse := decodeAPIResponse(t, groupsRecorder)
+	require.True(t, groupsResponse.Success, groupsResponse.Message)
+	var groups map[string]map[string]any
+	require.NoError(t, common.Unmarshal(groupsResponse.Data, &groups))
+	assert.Len(t, groups, 3)
+	assert.Contains(t, groups, "LD")
+	assert.Contains(t, groups, "YJ")
+	assert.Contains(t, groups, "CCPG")
+	assert.NotContains(t, groups, "default")
+
+	body := map[string]any{
+		"name":            "admin-group-token",
+		"expired_time":    -1,
+		"unlimited_quota": true,
+		"group":           "YJ",
+	}
+	createCtx, createRecorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/", body, user.Id)
+	createCtx.Set("role", common.RoleRootUser)
+	AddToken(createCtx)
+	createResponse := decodeAPIResponse(t, createRecorder)
+	require.True(t, createResponse.Success, createResponse.Message)
+	var token model.Token
+	require.NoError(t, db.First(&token, "name = ?", "admin-group-token").Error)
+	assert.Equal(t, "YJ", token.Group)
+
+	body["group"] = "unavailable"
+	rejectedCtx, rejectedRecorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/", body, user.Id)
+	rejectedCtx.Set("role", common.RoleRootUser)
+	AddToken(rejectedCtx)
+	assert.False(t, decodeAPIResponse(t, rejectedRecorder).Success)
 }
 
 func TestAddTokenRejectsGroupDifferentFromUserGroup(t *testing.T) {
