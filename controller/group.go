@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
@@ -39,7 +40,7 @@ func GetGroups(c *gin.Context) {
 }
 
 func GetUserGroups(c *gin.Context) {
-	usableGroups := make(map[string]map[string]interface{})
+	usableGroups := make(map[string]map[string]any)
 	userGroup, err := getCurrentUserGroup(c)
 	if err != nil {
 		common.ApiError(c, err)
@@ -47,9 +48,15 @@ func GetUserGroups(c *gin.Context) {
 	}
 
 	if ratio_setting.ContainsGroupRatio(userGroup) {
-		usableGroups[userGroup] = map[string]interface{}{
-			"ratio": ratio_setting.GetGroupRatio(userGroup),
+		usableGroups[userGroup] = map[string]any{
+			"ratio": service.GetUserGroupRatio(userGroup, userGroup),
 			"desc":  setting.GetUsableGroupDescription(userGroup),
+		}
+	}
+	if _, ok := setting.GetUserUsableGroupsCopy()["auto"]; ok {
+		usableGroups["auto"] = map[string]any{
+			"ratio": "自动",
+			"desc":  setting.GetUsableGroupDescription("auto"),
 		}
 	}
 
@@ -68,6 +75,9 @@ func normalizeTokenGroupForCurrentUser(c *gin.Context, tokenGroup string) (strin
 	tokenGroup = strings.TrimSpace(tokenGroup)
 	if tokenGroup == "" {
 		return userGroup, nil
+	}
+	if tokenGroup == "auto" {
+		return tokenGroup, nil
 	}
 	if tokenGroup != userGroup {
 		return "", fmt.Errorf("无权创建 %s 分组的令牌", tokenGroup)
