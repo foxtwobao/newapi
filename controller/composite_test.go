@@ -453,6 +453,39 @@ func TestCompositeAuthorizationAndNativeControls(t *testing.T) {
 	require.Error(t, model.UpdateOption("AutoGroups", `["PPTONE"]`))
 }
 
+func TestCompositeGroupVisibilityRespectsMainPermissions(t *testing.T) {
+	_, user, _ := newCompositeFixture(t)
+	for _, tc := range []struct {
+		name          string
+		role          int
+		usable        string
+		wantComposite bool
+	}{
+		{"ordinary user", common.RoleCommonUser, `{"default":"Default","PPTONE":"PPT"}`, false},
+		{"allowed administrator", common.RoleRootUser, `{"default":"Default","PPTONE":"PPT"}`, true},
+		{"restricted administrator", common.RoleRootUser, `{"default":"Default"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(tc.usable))
+			c, recorder := newAuthenticatedContext(t, http.MethodGet, "/api/user/self/groups", nil, user.Id)
+			c.Set("role", tc.role)
+			GetUserGroups(c)
+			response := decodeAPIResponse(t, recorder)
+			require.True(t, response.Success, response.Message)
+			var groups map[string]map[string]any
+			require.NoError(t, common.Unmarshal(response.Data, &groups))
+			assert.Contains(t, groups, "default")
+			if tc.wantComposite {
+				require.Contains(t, groups, "PPTONE")
+				assert.Equal(t, "composite", groups["PPTONE"]["type"])
+				assert.Equal(t, "COMPOSITE", groups["PPTONE"]["ratio"])
+			} else {
+				assert.NotContains(t, groups, "PPTONE")
+			}
+		})
+	}
+}
+
 func TestCompositeManagementAndRoutingIsolation(t *testing.T) {
 	engine, user, token := newCompositeFixture(t)
 	require.NoError(t, model.LOG_DB.AutoMigrate(&model.AuditLog{}))
