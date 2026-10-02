@@ -118,6 +118,9 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	if ok {
 		actualGroupRatio = userGroupRatio
 	}
+	if composite := relayInfo.PriceData.GroupRatioInfo.Composite; composite != nil {
+		actualGroupRatio = composite.FinalRatio
+	}
 
 	quotaInfo := QuotaInfo{
 		InputDetails: TokenDetails{

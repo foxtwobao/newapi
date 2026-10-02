@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/composite_setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/performance_setting"
@@ -228,6 +229,12 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if err := validateCompositeOption(key, value); err != nil {
+		return err
+	}
+	if key == legacyAccessTokenRetireAtKey {
+		return errLegacyRetireAtReadOnly
+	}
 	if err := operation_setting.ValidateQuotaOption(key, value); err != nil {
 		return err
 	}
@@ -244,6 +251,9 @@ func validateOptionValue(key string, value string) error {
 }
 
 func UpdateOption(key string, value string) error {
+	if key == "GroupRatio" || key == "group_ratio_setting.group_ratio" {
+		return UpdateOptionsBulk(map[string]string{key: value})
+	}
 	if IsRequestPolicyOption(key) {
 		return UpdateRequestPolicyOptions(map[string]string{key: value})
 	}
@@ -281,6 +291,11 @@ func UpdateOptionsBulk(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
 	}
+	normalizedValues, normalizeErr := normalizeGroupRatioOptions(values)
+	if normalizeErr != nil {
+		return normalizeErr
+	}
+	values = normalizedValues
 	for key := range values {
 		if IsPasskeyDomainOption(key) {
 			_, err := UpdatePasskeyDomainOptions(values, false, "")
@@ -323,6 +338,9 @@ func UpdateOptionsBulk(values map[string]string) error {
 				return err
 			}
 		}
+		if _, changed := values["GroupRatio"]; changed {
+			return tx.Where(map[string]any{"key": "group_ratio_setting.group_ratio"}).Delete(&Option{}).Error
+		}
 		return nil
 	})
 	if err != nil {
@@ -340,7 +358,12 @@ func UpdateOptionsBulk(values map[string]string) error {
 }
 
 func updateOptionMap(key string, value string) (err error) {
-	if key == retiredThemeOptionKey {
+	if key == composite_setting.OptionKey {
+		if err := composite_setting.UpdateIdentityIndex(value); err != nil {
+			return err
+		}
+	}
+	if key == retiredThemeOptionKey || key == legacyAccessTokenRetireAtKey {
 		common.OptionMapRWMutex.Lock()
 		delete(common.OptionMap, key)
 		common.OptionMapRWMutex.Unlock()

@@ -1,0 +1,21 @@
+name: newapi-tokenone-dev
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: newapi-tokenone-dev-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: newapi_dev
+      POSTGRES_DB: tokenone_dev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Use data/tokenone-lab/dev/database.env}
+    ports:
+      - "127.0.0.1:55211:5432"
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U newapi_dev -d tokenone_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+volumes:
+  postgres:

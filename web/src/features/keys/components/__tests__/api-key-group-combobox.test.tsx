@@ -65,6 +65,12 @@ const options = [
   },
   { value: 'default', label: 'default', desc: 'User group', ratio: 1 },
   { value: 'vip', label: 'vip', desc: 'Priority group', ratio: 3 },
+  {
+    value: 'PPTONE',
+    label: 'PPTONE',
+    desc: 'Composite access',
+    ratio: 'COMPOSITE',
+  },
 ]
 
 function Harness(props: { initialValue: string }) {
@@ -97,6 +103,18 @@ function getCommandItem(label: string): HTMLElement {
 }
 
 describe('API key group combobox Auto effect', () => {
+  test('labels a composite group with its type instead of Auto', () => {
+    render(<Harness initialValue='PPTONE' />)
+
+    const trigger = getTrigger()
+    expect(within(trigger).getByText('COMPOSITE')).toBeInTheDocument()
+    expect(within(trigger).queryByText('Auto')).not.toBeInTheDocument()
+    expect(trigger).not.toHaveAttribute('data-auto-group-effect')
+
+    fireEvent.click(trigger)
+    expect(getCommandItem('Composite access')).toHaveTextContent('COMPOSITE')
+  })
+
   test('uses the compact table capsules in the selected group and dropdown options', () => {
     setReducedMotion(false)
     render(<Harness initialValue='auto' />)

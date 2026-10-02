@@ -1,0 +1,21 @@
+[Unit]
+Description=New API development on an isolated copy of tokenone lab data
+Requires=docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=exec
+User=hulei
+Group=hulei
+WorkingDirectory=/home/hulei/projects/newapi
+ExecStart=/usr/bin/python3 /home/hulei/projects/newapi/deploy/tokenone-lab/run.py dev
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+UMask=0077
+# Development is local-only; the copied channels are also disabled.
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target

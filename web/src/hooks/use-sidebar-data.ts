@@ -95,14 +95,14 @@ export function useSidebarData(): SidebarData {
             icon: FileText,
           },
           {
-            title: t('Usage Summary'),
-            url: '/usage-summary',
-            icon: BarChart3,
-          },
-          {
             title: t('Audit Logs'),
             url: '/usage-logs/audit',
             icon: ClipboardList,
+          },
+          {
+            title: t('Usage Summary'),
+            url: '/usage-summary',
+            icon: BarChart3,
           },
           {
             title: t('Task Logs'),
@@ -180,6 +180,7 @@ export function useSidebarData(): SidebarData {
             url: '/system-settings/site',
             activeUrls: ['/system-settings'],
             icon: Settings,
+            requiredRole: ROLE.SUPER_ADMIN,
           },
         ],
       },

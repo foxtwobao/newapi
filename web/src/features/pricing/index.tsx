@@ -32,6 +32,7 @@ import {
   ModelCardGrid,
   ModelDetailsDrawer,
 } from './components'
+import { CompositePricing } from './components/composite-pricing'
 import { EXCLUDED_GROUPS, VIEW_MODES } from './constants'
 import { useFilters } from './hooks/use-filters'
 import { usePricingData } from './hooks/use-pricing-data'
@@ -43,6 +44,7 @@ export function Pricing() {
   )
 
   const {
+    compositeGroups,
     models,
     vendors,
     groupRatio,
@@ -202,6 +204,7 @@ export function Pricing() {
             />
           </header>
 
+          <CompositePricing groups={compositeGroups} />
           <div className='grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]'>
             <PricingSidebar
               quotaTypeFilter={quotaTypeFilter}
