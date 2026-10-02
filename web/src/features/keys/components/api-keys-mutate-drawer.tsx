@@ -64,7 +64,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { RelatedPolicyLink } from '@/features/system-settings/request-policies/related-policy-link'
 import { useStatus } from '@/hooks/use-status'
-import { getUserModels, getUserGroups } from '@/lib/api'
+import { getUserGroups, getUserModels } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
@@ -123,11 +123,11 @@ export function ApiKeysMutateDrawer({
     staleTime: 0,
   })
 
-  // Fetch groups
   const {
     data: groupsData,
     isFetched: groupsFetched,
     isFetching: groupsFetching,
+    isSuccess: groupsReady,
   } = useQuery({
     queryKey: ['user-groups'],
     queryFn: async () => requireServerSuccess(await getUserGroups()),
@@ -161,12 +161,14 @@ export function ApiKeysMutateDrawer({
   const models = modelsData?.data || []
   const groups = useMemo<ApiKeyGroupOption[]>(
     () =>
-      Object.entries(groupsData?.data || {}).map(([key, info]) => ({
-        value: key,
-        label: key,
-        desc: info.desc || key,
-        ratio: info.ratio,
-      })),
+      Object.entries(groupsData?.data || {})
+        .filter(([, info]) => info.type !== 'composite')
+        .map(([key, info]) => ({
+          value: key,
+          label: key,
+          desc: info.desc || key,
+          ratio: info.ratio,
+        })),
     [groupsData]
   )
   const backendHasAuto = groups.some((g) => g.value === 'auto')
@@ -270,9 +272,30 @@ export function ApiKeysMutateDrawer({
   const isFormInitialized = initializedTarget === formTarget
   const selectedGroup = form.watch('group')
 
+  const storedGroup = apiKeyData?.data?.group ?? currentRow?.group ?? ''
+  const isCompositeKey =
+    isUpdate && groupsData?.data?.[storedGroup]?.type === 'composite'
+  const canEditGroup =
+    groupsReady &&
+    (!isUpdate ||
+      !storedGroup ||
+      groups.some((group) => group.value === storedGroup))
+  const canSubmit =
+    isFormInitialized &&
+    !isSubmitting &&
+    !groupsFetching &&
+    (isUpdate || groupsReady)
+
   // Correct group after groups load: if the form value is not in available groups, fall back
   useEffect(() => {
-    if (groups.length === 0) return
+    if (
+      !isFormInitialized ||
+      !canEditGroup ||
+      groupsFetching ||
+      groups.length === 0
+    ) {
+      return
+    }
     const currentGroup = selectedGroup
     if (currentGroup && !groups.some((g) => g.value === currentGroup)) {
       const fallback =
@@ -286,9 +309,17 @@ export function ApiKeysMutateDrawer({
         form.setValue('cross_group_retry', false)
       }
     }
-  }, [groups, form, selectedGroup])
+  }, [
+    groups,
+    form,
+    selectedGroup,
+    isFormInitialized,
+    canEditGroup,
+    groupsFetching,
+  ])
 
   const onSubmit = async (data: ApiKeyFormValues) => {
+    if (!canSubmit) return
     setIsSubmitting(true)
     try {
       const basePayload = transformFormDataToPayload(data)
@@ -296,6 +327,7 @@ export function ApiKeysMutateDrawer({
       if (isUpdate && currentRow) {
         const result = await updateApiKey({
           ...basePayload,
+          group: canEditGroup ? basePayload.group : storedGroup,
           id: currentRow.id,
         })
         if (result.success) {
@@ -399,7 +431,7 @@ export function ApiKeysMutateDrawer({
             id='api-key-form'
             onSubmit={form.handleSubmit(onSubmit, onInvalid)}
             aria-busy={!isFormInitialized}
-            inert={!isFormInitialized || isSubmitting ? true : undefined}
+            inert={!canSubmit ? true : undefined}
             className={sideDrawerFormClassName('gap-5')}
           >
             <SideDrawerSection>
@@ -416,42 +448,49 @@ export function ApiKeysMutateDrawer({
                   <FormItem>
                     <FormLabel>{t('Name')}</FormLabel>
                     <FormControl>
-                      <Input {...field} placeholder={t('Enter a name')} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name='group'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Group')}</FormLabel>
-                    <FormControl>
-                      <ApiKeyGroupCombobox
-                        options={groups}
-                        value={field.value}
-                        onValueChange={(group) => {
-                          field.onChange(group)
-                          if (group === 'auto') {
-                            form.setValue('cross_group_retry', true, {
-                              shouldDirty: true,
-                            })
-                            return
-                          }
-                          form.setValue('cross_group_retry', false, {
-                            shouldDirty: true,
-                          })
-                        }}
-                        placeholder={t('Select a group')}
+                      <Input
+                        {...field}
+                        disabled={isCompositeKey}
+                        placeholder={t('Enter a name')}
                       />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
+
+              {canEditGroup && (
+                <FormField
+                  control={form.control}
+                  name='group'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Group')}</FormLabel>
+                      <FormControl>
+                        <ApiKeyGroupCombobox
+                          options={groups}
+                          disabled={groupsFetching}
+                          value={field.value}
+                          onValueChange={(group) => {
+                            field.onChange(group)
+                            if (group === 'auto') {
+                              form.setValue('cross_group_retry', true, {
+                                shouldDirty: true,
+                              })
+                              return
+                            }
+                            form.setValue('cross_group_retry', false, {
+                              shouldDirty: true,
+                            })
+                          }}
+                          placeholder={t('Select a group')}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
 
               {selectedGroup === 'auto' && (
                 <FormField
@@ -771,7 +810,7 @@ export function ApiKeysMutateDrawer({
           <Button
             type='button'
             onClick={form.handleSubmit(onSubmit, onInvalid)}
-            disabled={!isFormInitialized || isSubmitting}
+            disabled={!canSubmit}
             className='w-full sm:w-auto'
           >
             {isSubmitting ? t('Saving...') : t('Save changes')}
