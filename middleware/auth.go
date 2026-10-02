@@ -475,6 +475,9 @@ func TokenAuth() func(c *gin.Context) {
 		if err != nil {
 			return
 		}
+		if !prepareCompositeRequest(c) {
+			return
+		}
 		c.Next()
 	}
 }

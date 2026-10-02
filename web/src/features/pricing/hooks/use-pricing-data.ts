@@ -65,6 +65,7 @@ export function usePricingData(enabled = true) {
   }, [data])
 
   return {
+    compositeGroups: data?.composite_groups ?? [],
     models,
     vendors: data?.vendors ?? [],
     groupRatio: data?.group_ratio ?? {},

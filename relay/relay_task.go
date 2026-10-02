@@ -289,7 +289,10 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			}
 			return nil, service.TaskErrorWrapper(runErr, "model_price_error", http.StatusBadRequest)
 		}
-		groupRatioInfo := helper.HandleGroupRatio(c, info)
+		groupRatioInfo, ratioErr := helper.ResolveRequestGroupRatio(c, info)
+		if ratioErr != nil {
+			return nil, service.TaskErrorWrapperLocal(ratioErr, "model_price_error", http.StatusBadRequest)
+		}
 		quota, clamp := common.QuotaRoundChecked(cost * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
 		noteTaskQuotaClamp(info, clamp)
 		priceData = types.PriceData{Quota: quota, QuotaToPreConsume: quota, GroupRatioInfo: groupRatioInfo}
@@ -335,6 +338,10 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		info.ForcePreConsume = true
 		if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {
 			return nil, service.TaskErrorFromAPIError(apiErr)
+		}
+	} else if info.PriceData.GroupRatioInfo.Composite != nil && info.Billing != nil {
+		if err := info.Billing.Reserve(info.PriceData.Quota); err != nil {
+			return nil, service.TaskErrorWrapperLocal(err, "insufficient_quota", http.StatusForbidden)
 		}
 	}
 

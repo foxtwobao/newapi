@@ -62,6 +62,7 @@ function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
               auto: { desc: 'Automatic routing', ratio: 'auto' },
               default: { desc: 'Standard access', ratio: 1 },
               vip: { desc: 'Priority access', ratio: 2 },
+              PPTONE: { desc: 'Composite access', ratio: 'COMPOSITE' },
             },
           },
         }
@@ -107,6 +108,7 @@ async function renderCreateDrawer(): Promise<void> {
         auto: { desc: 'Automatic routing', ratio: 'auto' },
         default: { desc: 'Standard access', ratio: 1 },
         vip: { desc: 'Priority access', ratio: 2 },
+        PPTONE: { desc: 'Composite access', ratio: 'COMPOSITE' },
       },
     },
     { updatedAt: freshAt }
@@ -204,6 +206,31 @@ afterEach(() => {
 })
 
 describe('API keys mutate drawer Auto group integration', () => {
+  test('allows a composite key but excludes composites from custom Auto members', async () => {
+    const createdPayloads: Array<Record<string, unknown>> = []
+    installApiFixtures(createdPayloads)
+    await renderCreateDrawer()
+
+    const autoOrderControl = getControlByLabel('Auto group order')
+    const addGroupTrigger = autoOrderControl.querySelector<HTMLButtonElement>(
+      'button[role="combobox"]'
+    )
+    if (!addGroupTrigger) {
+      throw new Error('Expected Auto group order combobox')
+    }
+    fireEvent.click(addGroupTrigger)
+    expect(screen.queryByText('Composite access')).not.toBeInTheDocument()
+    fireEvent.click(addGroupTrigger)
+
+    selectComboboxOption(getControlByLabel('Group'), 'Composite access')
+    changeInput(getControlByLabel('Name'), 'composite')
+    fireEvent.click(findButton('Save changes', true))
+    await waitFor(() => expect(createdPayloads).toHaveLength(1))
+    expect(createdPayloads[0]?.group).toBe('PPTONE')
+    expect(createdPayloads[0]?.auto_groups).toEqual([])
+    expect(createdPayloads[0]?.cross_group_retry).toBe(false)
+  })
+
   test('inherits the root Auto order and sends an empty override for every batch-created key', async () => {
     const createdPayloads: Array<Record<string, unknown>> = []
     installApiFixtures(createdPayloads)

@@ -122,6 +122,7 @@ export type ModelCapability =
   | 'embeddings'
 
 export type PricingData = {
+  composite_groups?: import('./components/composite-pricing').CompositePriceGroup[]
   success: boolean
   message?: string
   data: PricingModel[]

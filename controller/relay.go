@@ -167,7 +167,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		service.AppendUsedChannel(c, channel.Id)
-		if billingErr := service.PrepareTieredBillingForSelectedGroup(c, relayInfo); billingErr != nil {
+		if billingErr := service.PrepareSelectedGroupBilling(c, relayInfo); billingErr != nil {
 			newAPIError = billingErr
 			break
 		}
@@ -283,7 +283,10 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		return nil, types.NewError(fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在（retry）", selectGroup, info.OriginModelName), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
 
-	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
+	info.PriceData.GroupRatioInfo, err = helper.ResolveRequestGroupRatio(c, info)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry())
+	}
 
 	service.RequestPolicy(c).BeginAttempt(channel, selectGroup)
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
@@ -622,6 +625,7 @@ func executeTaskSubmissionWith(
 	task.PrivateData.TokenId = relayInfo.TokenId
 	task.PrivateData.NodeName = common.NodeName
 	task.PrivateData.BillingContext = &model.TaskBillingContext{
+		Composite:       relayInfo.PriceData.GroupRatioInfo.Composite,
 		ModelPrice:      relayInfo.PriceData.ModelPrice,
 		GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
 		ModelRatio:      relayInfo.PriceData.ModelRatio,

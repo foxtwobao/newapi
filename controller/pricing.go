@@ -56,6 +56,11 @@ func GetPricing(c *gin.Context) {
 	}
 
 	usableGroup = service.GetUserUsableGroups(group)
+	composites, err := compositePricing(usableGroup, groupRatio)
+	if err != nil {
+		c.JSON(503, gin.H{"success": false, "message": "group configuration is unavailable"})
+		return
+	}
 	pricing = filterPricingByUsableGroups(pricing, usableGroup)
 	// check groupRatio contains usableGroup
 	for group := range ratio_setting.GetGroupRatioCopy() {
@@ -66,6 +71,7 @@ func GetPricing(c *gin.Context) {
 
 	c.JSON(200, gin.H{
 		"success":            true,
+		"composite_groups":   composites,
 		"data":               pricing,
 		"vendors":            model.GetVendors(),
 		"group_ratio":        groupRatio,

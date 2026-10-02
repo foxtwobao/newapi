@@ -36,6 +36,7 @@ func GetUserGroups(c *gin.Context) {
 				"ratio": service.GetUserGroupRatio(userGroup, groupName),
 				"desc":  desc,
 			}
+			setCompositeGroupMetadata(groupName, usableGroups[groupName])
 		}
 	}
 	if _, ok := userUsableGroups["auto"]; ok {

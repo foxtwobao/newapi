@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { parseCurrencyDisplayType } from '@/lib/currency'
 
+import { CompositeSettings } from '../composite'
 import { CheckinSettingsSection } from '../general/checkin-settings-section'
 import { PricingSection } from '../general/pricing-section'
 import { QuotaSettingsSection } from '../general/quota-settings-section'
@@ -127,6 +128,11 @@ const BILLING_SECTIONS = [
         visibleTabs={['groups']}
       />
     ),
+  },
+  {
+    id: 'composite',
+    titleKey: 'COMPOSITE groups',
+    build: () => <CompositeSettings />,
   },
   {
     id: 'payment',

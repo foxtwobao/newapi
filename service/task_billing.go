@@ -48,6 +48,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 		}
 	}
 	other := model.NewLogOther()
+	AppendCompositeBilling(other, info.PriceData.GroupRatioInfo.Composite)
 	other.SetPublic("is_task", true)
 	other.SetPublic("request_path", c.Request.URL.Path)
 	if taskDeliveredInline(c, task) {
@@ -148,6 +149,7 @@ func taskAdjustTokenQuota(ctx context.Context, task *model.Task, delta int) {
 func taskBillingOther(task *model.Task) *model.LogOther {
 	other := model.NewLogOther()
 	if bc := task.PrivateData.BillingContext; bc != nil {
+		AppendCompositeBilling(other, bc.Composite)
 		other.SetPublic("model_price", bc.ModelPrice)
 		if bc.ModelRatio > 0 {
 			other.SetPublic("model_ratio", bc.ModelRatio)
@@ -387,6 +389,9 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 
 	// 获取模型价格和倍率
 	modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
+	if bc := task.PrivateData.BillingContext; bc != nil && bc.Composite != nil {
+		modelRatio, hasRatioSetting = bc.ModelRatio, true
+	}
 	// 只有配置了倍率(非固定价格)时才按 token 重新计费
 	if !hasRatioSetting || modelRatio <= 0 {
 		return false
@@ -412,6 +417,9 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 		finalGroupRatio = userGroupRatio
 	} else {
 		finalGroupRatio = groupRatio
+	}
+	if bc := task.PrivateData.BillingContext; bc != nil && bc.Composite != nil {
+		finalGroupRatio = bc.Composite.FinalRatio
 	}
 
 	// 计算 OtherRatios 乘积（视频折扣、时长等）

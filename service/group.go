@@ -57,7 +57,7 @@ func GetUserAutoGroup(userGroup string) []string {
 	autoGroups := make([]string, 0)
 	seen := make(map[string]struct{})
 	for _, group := range setting.GetAutoGroups() {
-		if !IsUserSelectableGroup(userGroup, group) {
+		if !IsUserSelectableAutoGroup(userGroup, group) {
 			continue
 		}
 		if _, ok := seen[group]; ok {
@@ -76,7 +76,7 @@ func FilterUserTokenAutoGroups(userGroup string, groups []string) []string {
 	filtered := make([]string, 0, min(len(groups), maxCount))
 	seen := make(map[string]struct{})
 	for _, group := range groups {
-		if !IsUserSelectableGroup(userGroup, group) {
+		if !IsUserSelectableAutoGroup(userGroup, group) {
 			continue
 		}
 		if _, ok := seen[group]; ok {
@@ -95,15 +95,18 @@ func FilterUserTokenAutoGroups(userGroup string, groups []string) []string {
 // The absence of the context value means that the token inherits the complete
 // global Auto list; a present (even empty) value is an explicit token snapshot.
 func GetRequestAutoGroups(c *gin.Context, userGroup string) []string {
+	if composite := RequestComposite(c); composite != nil {
+		return append([]string(nil), composite.Members...)
+	}
 	value, ok := common.GetContextKey(c, constant.ContextKeyTokenAutoGroups)
 	if !ok {
-		return GetUserAutoGroup(userGroup)
+		return ordinaryAutoGroups(c, GetUserAutoGroup(userGroup))
 	}
 	groups, ok := value.([]string)
 	if !ok {
 		return []string{}
 	}
-	return FilterUserTokenAutoGroups(userGroup, groups)
+	return FilterUserTokenAutoGroups(userGroup, ordinaryAutoGroups(c, groups))
 }
 
 // GetGroupsEnabledModels 按 groups 顺序获取各分组启用的模型并去重

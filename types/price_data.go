@@ -8,6 +8,7 @@ import (
 )
 
 type GroupRatioInfo struct {
+	Composite         *CompositeBilling
 	GroupRatio        float64
 	GroupSpecialRatio float64
 	HasSpecialRatio   bool

@@ -28,6 +28,7 @@ import {
   useSystemConfigStore,
 } from '@/stores/system-config-store'
 
+import { CompositePricing } from '../components/composite-pricing'
 import { DynamicPricingBreakdown } from '../components/dynamic-pricing-breakdown'
 import { ModelCard } from '../components/model-card'
 import { ModelDetailsContent } from '../components/model-details'
@@ -43,6 +44,84 @@ import {
 import type { PricingModel, BillingUsageSchema } from '../types'
 
 vi.mock('@visactor/react-vchart', () => ({ VChart: () => null }))
+
+it('shows ordered composite price paths with their final multipliers and hides unavailable prices', async () => {
+  const user = userEvent.setup()
+  render(
+    <CompositePricing
+      groups={[
+        {
+          name: 'PPTONE',
+          definition: {
+            enabled: true,
+            cross_group_retry: false,
+            members: ['GPT', 'IMAGE'],
+          },
+          models: [
+            {
+              model_name: 'gpt-5.6',
+              paths: [
+                {
+                  member: 'GPT',
+                  composite_ratio: 0.8,
+                  member_ratio: 0.4,
+                  final_ratio: 0.32,
+                },
+                {
+                  member: 'IMAGE',
+                  composite_ratio: 0.8,
+                  member_ratio: 0.8,
+                  final_ratio: 0.64,
+                },
+              ],
+              pricing: {
+                id: 0,
+                model_name: 'gpt-5.6',
+                quota_type: 1,
+                model_price: 1,
+                model_ratio: 0,
+                completion_ratio: 0,
+                enable_groups: [],
+              },
+            },
+          ],
+        },
+        {
+          name: 'DISABLED',
+          definition: {
+            enabled: false,
+            cross_group_retry: false,
+            members: ['GPT'],
+          },
+          error: 'disabled',
+          models: [],
+        },
+      ]}
+    />
+  )
+  await user.click(screen.getByRole('button', { name: 'PPTONE' }))
+  const table = screen.getByRole('table', { name: 'PPTONE' })
+  expect(
+    within(table)
+      .getAllByRole('row')
+      .slice(1)
+      .map((row) => row.textContent)
+  ).toEqual([
+    expect.stringContaining('GPT0.8 × 0.4 = 0.32'),
+    expect.stringContaining('IMAGE0.8 × 0.8 = 0.64'),
+  ])
+  expect(within(table).getByText('0.32')).toBeVisible()
+  expect(within(table).getByText('0.64')).toBeVisible()
+  expect(within(table).getAllByText('USD / request')).toHaveLength(2)
+  await user.click(screen.getByRole('button', { name: 'DISABLED' }))
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'This composite group is unavailable'
+  )
+  await act(async () => {
+    await i18next.changeLanguage('zhTW')
+  })
+  expect(screen.getByText('0.8 × 0.4 = 0.32')).toBeVisible()
+})
 
 it('shows an explicit free request price alongside token prices with distinct units', () => {
   render(

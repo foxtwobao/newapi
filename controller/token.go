@@ -120,6 +120,10 @@ func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) boo
 		}
 	}
 
+	if err := model.ValidateAutoGroupMembers(groups); err != nil {
+		common.ApiError(c, err)
+		return false
+	}
 	if err := token.SetAutoGroups(groups); err != nil {
 		common.ApiError(c, err)
 		return false
@@ -283,6 +287,9 @@ func AddToken(c *gin.Context) {
 		return
 	}
 	token := request.Token
+	if !validateTokenGroup(c, token.Group) {
+		return
+	}
 	if len(token.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return
@@ -437,6 +444,9 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
 		cleanToken.ModelLimits = token.ModelLimits
 		cleanToken.AllowIps = token.AllowIps
+		if !validateTokenGroup(c, token.Group) {
+			return
+		}
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
 		if token.Group != "auto" {

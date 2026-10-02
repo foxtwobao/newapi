@@ -1,0 +1,20 @@
+[Unit]
+Description=New API from the newapi project on the existing tokenone lab database
+Requires=docker.service
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=hulei
+Group=hulei
+WorkingDirectory=/home/hulei/projects/newapi
+ExecStartPre=/usr/bin/docker start codex-newapi-test-pg-20260924
+ExecStart=/usr/bin/python3 /home/hulei/projects/newapi/deploy/tokenone-lab/run.py lab
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
