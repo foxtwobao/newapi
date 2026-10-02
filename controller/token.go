@@ -322,12 +322,7 @@ func AddToken(c *gin.Context) {
 		})
 		return
 	}
-	tokenGroup, err := normalizeTokenGroupForCurrentUser(c, token.Group)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if tokenGroup == "auto" {
+	if token.Group == "auto" {
 		if !setTokenAutoGroups(c, &token, request.AutoGroups.Groups) {
 			return
 		}
@@ -353,7 +348,7 @@ func AddToken(c *gin.Context) {
 		ModelLimitsEnabled: token.ModelLimitsEnabled,
 		ModelLimits:        token.ModelLimits,
 		AllowIps:           token.AllowIps,
-		Group:              tokenGroup,
+		Group:              token.Group,
 		CrossGroupRetry:    token.CrossGroupRetry,
 		AutoGroups:         token.AutoGroups,
 	}
@@ -452,14 +447,9 @@ func UpdateToken(c *gin.Context) {
 		if !validateTokenGroup(c, token.Group) {
 			return
 		}
-		tokenGroup, err := normalizeTokenGroupForCurrentUser(c, token.Group)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		cleanToken.Group = tokenGroup
+		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
-		if tokenGroup != "auto" {
+		if token.Group != "auto" {
 			cleanToken.CrossGroupRetry = false
 			_ = cleanToken.SetAutoGroups(nil)
 		} else if request.AutoGroups.Set {

@@ -21,7 +21,7 @@ services:
       dockerfile: Dockerfile.dev
     image: new-api-dev:local
     container_name: new-api-dev
-    restart: "no"
+    restart: unless-stopped
     ports:
       - "3000:3000"
     volumes:
@@ -47,14 +47,14 @@ services:
   redis:
     image: redis:7-alpine
     container_name: new-api-dev-redis
-    restart: "no"
+    restart: unless-stopped
     networks:
       - dev-network
 
   postgres:
     image: postgres:15-alpine
     container_name: new-api-dev-pg
-    restart: "no"
+    restart: unless-stopped
     environment:
       POSTGRES_USER: root
       POSTGRES_PASSWORD: 123456
