@@ -18,7 +18,7 @@ services:
   new-api:
     image: calciumion/new-api:latest
     container_name: new-api
-    restart: "no"
+    restart: always
     command: --log-dir /app/logs
     ports:
       - "3000:3000"
@@ -68,7 +68,7 @@ services:
   redis:
     image: redis:latest
     container_name: redis
-    restart: "no"
+    restart: always
     command: ["redis-server", "--requirepass", "123456"]  # ⚠️ IMPORTANT: Change this password in production!
     networks:
       - new-api-network
@@ -76,7 +76,7 @@ services:
   postgres:
     image: postgres:15
     container_name: postgres
-    restart: "no"
+    restart: always
     environment:
       POSTGRES_USER: root
       POSTGRES_PASSWORD: 123456  # ⚠️ IMPORTANT: Change this password in production!
@@ -91,7 +91,7 @@ services:
 #  mysql:
 #    image: mysql:8.2
 #    container_name: mysql
-#    restart: "no"
+#    restart: always
 #    environment:
 #      MYSQL_ROOT_PASSWORD: 123456  # ⚠️ IMPORTANT: Change this password in production!
 #      MYSQL_DATABASE: new-api

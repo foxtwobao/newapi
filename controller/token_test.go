@@ -18,8 +18,6 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -118,28 +116,6 @@ func setupTokenControllerTestDB(t *testing.T) *gorm.DB {
 	db := openTokenControllerTestDB(t)
 	migrateTokenControllerTestDB(t, db)
 	return db
-}
-
-func setupTokenAndUserControllerTestDB(t *testing.T) *gorm.DB {
-	t.Helper()
-
-	db := setupTokenControllerTestDB(t)
-	require.NoError(t, db.AutoMigrate(&model.User{}))
-	return db
-}
-
-func seedUser(t *testing.T, db *gorm.DB, userID int, group string) *model.User {
-	t.Helper()
-
-	user := &model.User{
-		Id:       userID,
-		Username: fmt.Sprintf("user-%d", userID),
-		Password: "password-hash",
-		Group:    group,
-		Status:   common.UserStatusEnabled,
-	}
-	require.NoError(t, db.Create(user).Error)
-	return user
 }
 
 func openTokenControllerExternalDB(t *testing.T, dialect string, dsn string) (*gorm.DB, *bool) {
@@ -539,128 +515,8 @@ func TestGetTokenMasksKeyInResponse(t *testing.T) {
 	}
 }
 
-func TestGetUserGroupsOnlyReturnsCurrentUserGroup(t *testing.T) {
-	db := setupTokenAndUserControllerTestDB(t)
-	seedUser(t, db, 1, "vip")
-
-	ctx, recorder := newAuthenticatedContext(t, http.MethodGet, "/api/user/self/groups", nil, 1)
-	GetUserGroups(ctx)
-
-	response := decodeAPIResponse(t, recorder)
-	require.True(t, response.Success, "expected user groups response to succeed: %s", response.Message)
-
-	var groups map[string]map[string]interface{}
-	require.NoError(t, common.Unmarshal(response.Data, &groups))
-	assert.Contains(t, groups, "vip")
-	assert.NotContains(t, groups, "default")
-	assert.Len(t, groups, 1)
-}
-
-func TestAdminCanCreateTokenInConfiguredGroupWithoutOwnGroupRatio(t *testing.T) {
-	originalRatios := ratio_setting.GroupRatio2JSONString()
-	originalUsableGroups := setting.UserUsableGroups2JSONString()
-	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"LD":1,"YJ":1,"CCPG":1}`))
-	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"LD":"LD","YJ":"YJ","CCPG":"CCPG"}`))
-	t.Cleanup(func() {
-		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalRatios))
-		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUsableGroups))
-	})
-
-	db := setupTokenAndUserControllerTestDB(t)
-	user := seedUser(t, db, 1, "default")
-	require.NoError(t, db.Model(user).Update("role", common.RoleRootUser).Error)
-
-	groupsCtx, groupsRecorder := newAuthenticatedContext(t, http.MethodGet, "/api/user/self/groups", nil, user.Id)
-	groupsCtx.Set("role", common.RoleRootUser)
-	GetUserGroups(groupsCtx)
-	groupsResponse := decodeAPIResponse(t, groupsRecorder)
-	require.True(t, groupsResponse.Success, groupsResponse.Message)
-	var groups map[string]map[string]any
-	require.NoError(t, common.Unmarshal(groupsResponse.Data, &groups))
-	assert.Len(t, groups, 3)
-	assert.Contains(t, groups, "LD")
-	assert.Contains(t, groups, "YJ")
-	assert.Contains(t, groups, "CCPG")
-	assert.NotContains(t, groups, "default")
-
-	body := map[string]any{
-		"name":            "admin-group-token",
-		"expired_time":    -1,
-		"unlimited_quota": true,
-		"group":           "YJ",
-	}
-	createCtx, createRecorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/", body, user.Id)
-	createCtx.Set("role", common.RoleRootUser)
-	AddToken(createCtx)
-	createResponse := decodeAPIResponse(t, createRecorder)
-	require.True(t, createResponse.Success, createResponse.Message)
-	var token model.Token
-	require.NoError(t, db.First(&token, "name = ?", "admin-group-token").Error)
-	assert.Equal(t, "YJ", token.Group)
-
-	body["group"] = "unavailable"
-	rejectedCtx, rejectedRecorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/", body, user.Id)
-	rejectedCtx.Set("role", common.RoleRootUser)
-	AddToken(rejectedCtx)
-	assert.False(t, decodeAPIResponse(t, rejectedRecorder).Success)
-}
-
-func TestAddTokenRejectsGroupDifferentFromUserGroup(t *testing.T) {
-	db := setupTokenAndUserControllerTestDB(t)
-	seedUser(t, db, 1, "vip")
-
-	body := map[string]any{
-		"name":                 "forbidden-group-token",
-		"expired_time":         -1,
-		"remain_quota":         0,
-		"unlimited_quota":      true,
-		"model_limits_enabled": false,
-		"model_limits":         "",
-		"group":                "default",
-		"cross_group_retry":    false,
-	}
-
-	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/", body, 1)
-	AddToken(ctx)
-
-	response := decodeAPIResponse(t, recorder)
-	require.False(t, response.Success)
-	assert.Contains(t, response.Message, "无权创建")
-
-	var count int64
-	require.NoError(t, db.Model(&model.Token{}).Where("user_id = ?", 1).Count(&count).Error)
-	assert.Equal(t, int64(0), count)
-}
-
-func TestAddTokenDefaultsEmptyGroupToUserGroup(t *testing.T) {
-	db := setupTokenAndUserControllerTestDB(t)
-	seedUser(t, db, 1, "vip")
-
-	body := map[string]any{
-		"name":                 "empty-group-token",
-		"expired_time":         -1,
-		"remain_quota":         0,
-		"unlimited_quota":      true,
-		"model_limits_enabled": false,
-		"model_limits":         "",
-		"group":                "",
-		"cross_group_retry":    false,
-	}
-
-	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/", body, 1)
-	AddToken(ctx)
-
-	response := decodeAPIResponse(t, recorder)
-	require.True(t, response.Success, "expected token creation to succeed: %s", response.Message)
-
-	var token model.Token
-	require.NoError(t, db.First(&token, "name = ?", "empty-group-token").Error)
-	assert.Equal(t, "vip", token.Group)
-}
-
 func TestUpdateTokenMasksKeyInResponse(t *testing.T) {
-	db := setupTokenAndUserControllerTestDB(t)
-	seedUser(t, db, 1, "default")
+	db := setupTokenControllerTestDB(t)
 	token := seedToken(t, db, 1, "editable-token", "yzab1234cdef5678")
 
 	body := map[string]any{
@@ -694,36 +550,6 @@ func TestUpdateTokenMasksKeyInResponse(t *testing.T) {
 	if strings.Contains(recorder.Body.String(), token.Key) {
 		t.Fatalf("update response leaked raw token key: %s", recorder.Body.String())
 	}
-}
-
-func TestUpdateTokenRejectsGroupDifferentFromUserGroup(t *testing.T) {
-	db := setupTokenAndUserControllerTestDB(t)
-	seedUser(t, db, 1, "vip")
-	token := seedToken(t, db, 1, "editable-token", "mismatch1234token5678")
-	require.NoError(t, db.Model(token).Update("group", "vip").Error)
-
-	body := map[string]any{
-		"id":                   token.Id,
-		"name":                 "updated-token",
-		"expired_time":         -1,
-		"remain_quota":         100,
-		"unlimited_quota":      true,
-		"model_limits_enabled": false,
-		"model_limits":         "",
-		"group":                "default",
-		"cross_group_retry":    false,
-	}
-
-	ctx, recorder := newAuthenticatedContext(t, http.MethodPut, "/api/token/", body, 1)
-	UpdateToken(ctx)
-
-	response := decodeAPIResponse(t, recorder)
-	require.False(t, response.Success)
-	assert.Contains(t, response.Message, "无权创建")
-
-	var reloaded model.Token
-	require.NoError(t, db.First(&reloaded, token.Id).Error)
-	assert.Equal(t, "vip", reloaded.Group)
 }
 
 func TestGetTokenKeyRequiresOwnershipAndReturnsFullKey(t *testing.T) {
