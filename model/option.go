@@ -232,6 +232,9 @@ func validateOptionValue(key string, value string) error {
 	if err := validateCompositeOption(key, value); err != nil {
 		return err
 	}
+	if key == legacyAccessTokenRetireAtKey {
+		return errLegacyRetireAtReadOnly
+	}
 	if err := operation_setting.ValidateQuotaOption(key, value); err != nil {
 		return err
 	}
@@ -360,7 +363,7 @@ func updateOptionMap(key string, value string) (err error) {
 			return err
 		}
 	}
-	if key == retiredThemeOptionKey {
+	if key == retiredThemeOptionKey || key == legacyAccessTokenRetireAtKey {
 		common.OptionMapRWMutex.Lock()
 		delete(common.OptionMap, key)
 		common.OptionMapRWMutex.Unlock()
