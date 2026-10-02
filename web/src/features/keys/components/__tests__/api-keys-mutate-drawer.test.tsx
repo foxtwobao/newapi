@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test } from 'vitest'
 
+import { apiKeySchema, type ApiKey } from '../../types'
+
 const { createInstance } = await import('i18next')
 const { I18nextProvider, initReactI18next } = await import('react-i18next')
 const { QueryClient, QueryClientProvider } =
@@ -37,6 +39,7 @@ type ApiMethod = (url: string, data?: unknown) => Promise<{ data: unknown }>
 type MockableApi = {
   get: ApiMethod
   post: ApiMethod
+  put: ApiMethod
 }
 type RenderedDrawer = {
   queryClient: InstanceType<typeof QueryClient>
@@ -45,9 +48,13 @@ type RenderedDrawer = {
 const apiClient = api as unknown as MockableApi
 const originalGet = apiClient.get
 const originalPost = apiClient.post
+const originalPut = apiClient.put
 let renderedDrawer: RenderedDrawer | null = null
 
-function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
+function installApiFixtures(
+  createdPayloads: Array<Record<string, unknown>>,
+  currentRow?: ApiKey
+) {
   apiClient.get = async (url) => {
     switch (url) {
       case '/api/status':
@@ -62,7 +69,11 @@ function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
               auto: { desc: 'Automatic routing', ratio: 'auto' },
               default: { desc: 'Standard access', ratio: 1 },
               vip: { desc: 'Priority access', ratio: 2 },
-              PPTONE: { desc: 'Composite access', ratio: 'COMPOSITE' },
+              PPTONE: {
+                desc: 'Composite access',
+                ratio: 'COMPOSITE',
+                type: 'composite',
+              },
             },
           },
         }
@@ -74,6 +85,9 @@ function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
           },
         }
       default:
+        if (currentRow && url === `/api/token/${currentRow.id}`) {
+          return { data: { success: true, data: currentRow } }
+        }
         throw new Error(`Unexpected GET ${url}`)
     }
   }
@@ -83,9 +97,13 @@ function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
     createdPayloads.push(data as Record<string, unknown>)
     return { data: { success: true, data: {} } }
   }
+  apiClient.put = apiClient.post
 }
 
-async function renderCreateDrawer(): Promise<void> {
+async function renderDrawer(
+  currentRow?: ApiKey,
+  cacheGroups = true
+): Promise<void> {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -100,19 +118,25 @@ async function renderCreateDrawer(): Promise<void> {
     { success: true, data: [] },
     { updatedAt: freshAt }
   )
-  queryClient.setQueryData(
-    ['user-groups'],
-    {
-      success: true,
-      data: {
-        auto: { desc: 'Automatic routing', ratio: 'auto' },
-        default: { desc: 'Standard access', ratio: 1 },
-        vip: { desc: 'Priority access', ratio: 2 },
-        PPTONE: { desc: 'Composite access', ratio: 'COMPOSITE' },
+  if (cacheGroups) {
+    queryClient.setQueryData(
+      ['user-groups'],
+      {
+        success: true,
+        data: {
+          auto: { desc: 'Automatic routing', ratio: 'auto' },
+          default: { desc: 'Standard access', ratio: 1 },
+          vip: { desc: 'Priority access', ratio: 2 },
+          PPTONE: {
+            desc: 'Composite access',
+            ratio: 'COMPOSITE',
+            type: 'composite',
+          },
+        },
       },
-    },
-    { updatedAt: freshAt }
-  )
+      { updatedAt: freshAt }
+    )
+  }
   queryClient.setQueryData(
     ['token-auto-groups'],
     {
@@ -127,7 +151,11 @@ async function renderCreateDrawer(): Promise<void> {
     <QueryClientProvider client={queryClient}>
       <I18nextProvider i18n={i18n}>
         <ApiKeysProvider>
-          <ApiKeysMutateDrawer open onOpenChange={() => undefined} />
+          <ApiKeysMutateDrawer
+            open
+            currentRow={currentRow}
+            onOpenChange={() => undefined}
+          />
         </ApiKeysProvider>
       </I18nextProvider>
     </QueryClientProvider>
@@ -198,6 +226,7 @@ function selectComboboxOption(
 afterEach(() => {
   apiClient.get = originalGet
   apiClient.post = originalPost
+  apiClient.put = originalPut
   localStorage.clear()
   if (renderedDrawer) {
     renderedDrawer.queryClient.clear()
@@ -206,10 +235,10 @@ afterEach(() => {
 })
 
 describe('API keys mutate drawer Auto group integration', () => {
-  test('allows a composite key but excludes composites from custom Auto members', async () => {
+  test('hides composites from both new key groups and custom Auto members', async () => {
     const createdPayloads: Array<Record<string, unknown>> = []
     installApiFixtures(createdPayloads)
-    await renderCreateDrawer()
+    await renderDrawer()
 
     const autoOrderControl = getControlByLabel('Auto group order')
     const addGroupTrigger = autoOrderControl.querySelector<HTMLButtonElement>(
@@ -222,19 +251,21 @@ describe('API keys mutate drawer Auto group integration', () => {
     expect(screen.queryByText('Composite access')).not.toBeInTheDocument()
     fireEvent.click(addGroupTrigger)
 
-    selectComboboxOption(getControlByLabel('Group'), 'Composite access')
-    changeInput(getControlByLabel('Name'), 'composite')
-    fireEvent.click(findButton('Save changes', true))
-    await waitFor(() => expect(createdPayloads).toHaveLength(1))
-    expect(createdPayloads[0]?.group).toBe('PPTONE')
-    expect(createdPayloads[0]?.auto_groups).toEqual([])
-    expect(createdPayloads[0]?.cross_group_retry).toBe(false)
+    fireEvent.click(getControlByLabel('Group'))
+    expect(screen.queryByText('Composite access')).not.toBeInTheDocument()
+    expect(screen.queryByText('PPTONE')).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('option', { name: /Standard access/ })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('option', { name: /Automatic routing/ })
+    ).toBeInTheDocument()
   })
 
   test('inherits the root Auto order and sends an empty override for every batch-created key', async () => {
     const createdPayloads: Array<Record<string, unknown>> = []
     installApiFixtures(createdPayloads)
-    await renderCreateDrawer()
+    await renderDrawer()
 
     const groupTrigger = getControlByLabel('Group')
     expect(groupTrigger.textContent?.includes('auto')).toBe(true)
@@ -267,7 +298,7 @@ describe('API keys mutate drawer Auto group integration', () => {
   test('preserves an unsaved custom order and mode after Auto to ordinary to Auto changes', async () => {
     const createdPayloads: Array<Record<string, unknown>> = []
     installApiFixtures(createdPayloads)
-    await renderCreateDrawer()
+    await renderDrawer()
 
     const autoOrderControl = getControlByLabel('Auto group order')
     const addGroupTrigger = autoOrderControl.querySelector<HTMLButtonElement>(
@@ -304,4 +335,141 @@ describe('API keys mutate drawer Auto group integration', () => {
     await waitFor(() => expect(createdPayloads).toHaveLength(1))
     expect(createdPayloads[0]?.auto_groups).toEqual(['vip'])
   })
+})
+
+const appKey = apiKeySchema.parse({
+  id: 42,
+  name: 'App key',
+  key: 'masked-test-key',
+  status: 1,
+  remain_quota: 1_000_000,
+  used_quota: 0,
+  unlimited_quota: false,
+  expired_time: 2_000_000_000,
+  created_time: 0,
+  accessed_time: 0,
+  group: 'PPTONE',
+  model_limits_enabled: true,
+  model_limits: 'gpt-test',
+  allow_ips: '192.0.2.1',
+})
+
+describe('API key group visibility when editing', () => {
+  test('hides the composite group and preserves it when saving other key settings', async () => {
+    const payloads: Array<Record<string, unknown>> = []
+    installApiFixtures(payloads, appKey)
+    await renderDrawer(appKey)
+
+    expect(screen.queryByText('Group', { exact: true })).not.toBeInTheDocument()
+    expect(screen.queryByText('PPTONE')).not.toBeInTheDocument()
+    changeInput(getControlByLabel('Name'), 'Renamed app key')
+    fireEvent.click(findButton('Save changes', true))
+    await waitFor(() => expect(payloads).toHaveLength(1))
+    expect(payloads[0]).toMatchObject({
+      id: 42,
+      name: 'Renamed app key',
+      group: 'PPTONE',
+      remain_quota: 1_000_000,
+      expired_time: 2_000_000_000,
+      unlimited_quota: false,
+      model_limits_enabled: true,
+      model_limits: 'gpt-test',
+      allow_ips: '192.0.2.1',
+    })
+  })
+
+  test('prevents renaming a composite key', async () => {
+    const payloads: Array<Record<string, unknown>> = []
+    installApiFixtures(payloads, appKey)
+    await renderDrawer(appKey)
+
+    const nameInput = getControlByLabel('Name')
+    expect(nameInput).toBeDisabled()
+    expect(nameInput.value).toBe('App key')
+  })
+
+  test('allows ordinary group changes while excluding composite options', async () => {
+    const payloads: Array<Record<string, unknown>> = []
+    const ordinaryKey = { ...appKey, group: 'default' }
+    installApiFixtures(payloads, ordinaryKey)
+    await renderDrawer(ordinaryKey)
+
+    fireEvent.click(getControlByLabel('Group'))
+    expect(screen.queryByText('Composite access')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText('Priority access'))
+    fireEvent.click(findButton('Save changes', true))
+    await waitFor(() => expect(payloads).toHaveLength(1))
+    expect(payloads[0]?.group).toBe('vip')
+  })
+
+  test.each(['failure', 'missing group'])(
+    'preserves the stored group when group metadata has %s',
+    async (scenario) => {
+      const payloads: Array<Record<string, unknown>> = []
+      installApiFixtures(payloads, appKey)
+      const get = apiClient.get
+      apiClient.get = async (url) => {
+        if (url !== '/api/user/self/groups') return get(url)
+        if (scenario === 'failure') {
+          throw new Error('Group metadata unavailable')
+        }
+        return {
+          data: {
+            success: true,
+            data: { default: { desc: 'Standard access', ratio: 1 } },
+          },
+        }
+      }
+      await renderDrawer(appKey, false)
+
+      expect(
+        screen.queryByText('Group', { exact: true })
+      ).not.toBeInTheDocument()
+      changeInput(getControlByLabel('Name'), 'Preserved app key')
+      fireEvent.click(findButton('Save changes', true))
+      await waitFor(() => expect(payloads).toHaveLength(1))
+      expect(payloads[0]?.group).toBe('PPTONE')
+    }
+  )
+})
+
+test('keeps composite quota and expiration editable without changing its group', async () => {
+  const payloads: Array<Record<string, unknown>> = []
+  installApiFixtures(payloads, appKey)
+  await renderDrawer(appKey)
+
+  fireEvent.change(screen.getByRole('spinbutton', { name: /Quota/ }), {
+    target: { value: '3' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Never' }))
+  fireEvent.click(findButton('Save changes', true))
+  await waitFor(() => expect(payloads).toHaveLength(1))
+  expect(payloads[0]).toMatchObject({
+    group: 'PPTONE',
+    remain_quota: 1_500_000,
+    expired_time: -1,
+  })
+})
+
+test('waits for group metadata before enabling edits and preserves the composite group after loading', async () => {
+  const payloads: Array<Record<string, unknown>> = []
+  installApiFixtures(payloads, appKey)
+  const get = apiClient.get
+  let resolveGroups!: (response: Awaited<ReturnType<ApiMethod>>) => void
+  const pending = new Promise<Awaited<ReturnType<ApiMethod>>>((resolve) => {
+    resolveGroups = resolve
+  })
+  apiClient.get = (url) =>
+    url === '/api/user/self/groups' ? pending : get(url)
+  const ready = renderDrawer(appKey, false)
+
+  expect(findButton('Save changes', true)).toBeDisabled()
+  expect(screen.queryByText('Group', { exact: true })).not.toBeInTheDocument()
+  expect(screen.queryByText('PPTONE')).not.toBeInTheDocument()
+  resolveGroups(await get('/api/user/self/groups'))
+  await ready
+
+  fireEvent.click(findButton('Save changes', true))
+  await waitFor(() => expect(payloads).toHaveLength(1))
+  expect(payloads[0]?.group).toBe('PPTONE')
 })
