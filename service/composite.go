@@ -62,12 +62,21 @@ func RequestComposite(c *gin.Context) *composite_setting.Snapshot {
 // PrepareCompositeRequest runs only after native token validation, retaining
 // the token's stored group and all native model/IP/quota/expiry restrictions.
 func PrepareCompositeRequest(c *gin.Context) error {
+	name := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 	cfg, err := model.ReadCompositeConfig(model.DB)
 	if err != nil {
-		return errors.New("group configuration is unavailable")
+		if cfg == nil {
+			return errors.New("group configuration is unavailable")
+		}
+		if _, composite := cfg.Groups[name]; composite {
+			return errors.New("group configuration is unavailable")
+		}
+		// Only a complete registry from this read can establish that a group
+		// is ordinary. Never authorize from an eventually consistent cache.
+		c.Set(compositeConfigContextKey, cfg)
+		return nil
 	}
 	c.Set(compositeConfigContextKey, cfg)
-	name := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 	snapshot, err := cfg.Snapshot(name)
 	if err != nil || snapshot == nil {
 		return err

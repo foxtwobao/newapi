@@ -173,6 +173,90 @@ func TestCompositeInvalidStateAndExplicitFree(t *testing.T) {
 	assert.Equal(t, 1_000_000, token.RemainQuota)
 }
 
+func TestCompositeFreeModelPreConsumeParity(t *testing.T) {
+	for _, tc := range []struct {
+		group                string
+		usePrice, preConsume bool
+	}{
+		{"GPT", true, false}, {"PPTONE", true, false},
+		{"GPT", false, false}, {"PPTONE", false, false},
+		{"GPT", true, true}, {"PPTONE", true, true},
+		{"GPT", false, true}, {"PPTONE", false, true},
+	} {
+		t.Run(fmt.Sprintf("%s/price=%t/preconsume=%t", tc.group, tc.usePrice, tc.preConsume), func(t *testing.T) {
+			engine, user, token := newCompositeFixture(t)
+			oldFree := operation_setting.GetQuotaSetting().EnableFreeModelPreConsume
+			oldRatios := ratio_setting.ModelRatio2JSONString()
+			operation_setting.GetQuotaSetting().EnableFreeModelPreConsume = tc.preConsume
+			t.Cleanup(func() {
+				operation_setting.GetQuotaSetting().EnableFreeModelPreConsume = oldFree
+				require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldRatios))
+			})
+			require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","GPT":"GPT","PPTONE":"PPT"}`))
+			prices := `{}`
+			if tc.usePrice {
+				prices = `{"gpt-5.6":0}`
+			}
+			require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(prices))
+			require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-5.6":0}`))
+			require.NoError(t, model.DB.Model(user).Update("quota", 0).Error)
+			require.NoError(t, model.DB.Model(token).Update("group", tc.group).Error)
+			response := compositeRequest(engine, token, http.MethodPost, "/v1/chat/completions", `{"model":"gpt-5.6","messages":[{"role":"user","content":"hi"}]}`)
+			want := http.StatusOK
+			if tc.preConsume {
+				want = http.StatusForbidden
+			}
+			require.Equal(t, want, response.Code, response.Body.String())
+			require.NoError(t, model.DB.First(user, user.Id).Error)
+			require.NoError(t, model.DB.First(token, token.Id).Error)
+			assert.Zero(t, user.Quota)
+			assert.Equal(t, 1_000_000, token.RemainQuota)
+		})
+	}
+}
+
+func TestCompositeConfigFailureIsolation(t *testing.T) {
+	for _, tc := range []struct {
+		name, key, value string
+		ordinaryStatus   int
+	}{
+		{"invalid definition", composite_setting.OptionKey, `{"PPTONE":{"enabled":"invalid","members":["GPT"]}}`, http.StatusOK},
+		{"invalid ratios", "GroupRatio", `{`, http.StatusOK},
+		{"unknown registry", composite_setting.OptionKey, `{`, http.StatusForbidden},
+		{"null registry", composite_setting.OptionKey, `null`, http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine, user, token := newCompositeFixture(t)
+			require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","auto":"Auto","GPT":"GPT","PPTONE":"PPT"}`))
+			require.NoError(t, model.DB.Model(&model.Option{}).Where(map[string]any{"key": tc.key}).Update("value", tc.value).Error)
+			// Even a stale local index must not reinterpret a database Composite as ordinary.
+			require.NoError(t, composite_setting.UpdateIdentityIndex(`{}`))
+			for _, group := range []string{"PPTONE", "GPT", "auto"} {
+				require.NoError(t, model.DB.Model(token).Updates(map[string]any{"group": group, "auto_groups": `["PPTONE","GPT"]`}).Error)
+				response := compositeRequest(engine, token, http.MethodPost, "/v1/chat/completions", `{"model":"gpt-5.6","messages":[{"role":"user","content":"hi"}]}`)
+				want := tc.ordinaryStatus
+				if group == "PPTONE" {
+					want = http.StatusForbidden
+				}
+				require.Equal(t, want, response.Code, response.Body.String())
+				if want == http.StatusOK {
+					var log model.Log
+					require.NoError(t, model.LOG_DB.Where("user_id = ?", user.Id).Order("id DESC").First(&log).Error)
+					assert.Equal(t, 2000, log.Quota)
+					assert.NotContains(t, log.Other, `"composite"`)
+				}
+			}
+			if tc.key == composite_setting.OptionKey && tc.ordinaryStatus == http.StatusOK {
+				// Option synchronization must retain usable ordinary AUTO members even
+				// when a Composite definition has the wrong field types.
+				require.NoError(t, composite_setting.UpdateIdentityIndex(tc.value))
+				response := compositeRequest(engine, token, http.MethodPost, "/v1/chat/completions", `{"model":"gpt-5.6","messages":[{"role":"user","content":"hi"}]}`)
+				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestCompositeTaskSnapshotSurvivesRequest(t *testing.T) {
 	for _, scenario := range []string{"image/immediate", "image/SUCCESS", "image/FAILURE", "video/immediate", "video/SUCCESS", "video/FAILURE", "native/SUCCESS"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -688,11 +772,24 @@ func TestCompositeExpressionProtocolsAndNativeSpecialRatio(t *testing.T) {
 
 func TestCompositeRetriesReserveBeforeSendingAndRefund(t *testing.T) {
 	for _, tc := range []struct {
-		cross   bool
-		balance int
-	}{{false, 1_000_000}, {true, 1_000_000}, {true, 2000}} {
-		t.Run(fmt.Sprintf("cross=%t/balance=%d", tc.cross, tc.balance), func(t *testing.T) {
+		cross                   bool
+		balance                 int
+		firstRatio, secondRatio float64
+		secondFails             bool
+	}{
+		{false, 1_000_000, 0.4, 0.8, false},
+		{true, 1_000_000, 0.4, 0.8, false},
+		{true, 2000, 0.4, 0.8, false},
+		{true, 1_000_000, 0, 0.8, false},
+		{true, 1_000_000, 0.4, 0, false},
+		{true, 1_000_000, 0.4, 0.8, true},
+	} {
+		t.Run(fmt.Sprintf("cross=%t/balance=%d/ratios=%g,%g/fail=%t", tc.cross, tc.balance, tc.firstRatio, tc.secondRatio, tc.secondFails), func(t *testing.T) {
 			engine, user, token := newCompositeFixture(t)
+			oldFree := operation_setting.GetQuotaSetting().EnableFreeModelPreConsume
+			operation_setting.GetQuotaSetting().EnableFreeModelPreConsume = false
+			t.Cleanup(func() { operation_setting.GetQuotaSetting().EnableFreeModelPreConsume = oldFree })
+			require.NoError(t, model.UpdateOption("GroupRatio", fmt.Sprintf(`{"default":1,"GPT":%g,"IMAGE":%g,"PPTONE":0.8}`, tc.firstRatio, tc.secondRatio)))
 			require.NoError(t, model.DB.Model(user).Update("quota", tc.balance).Error)
 			require.NoError(t, model.DB.Model(token).Update("remain_quota", tc.balance).Error)
 			oldRetries := common.RetryTimes
@@ -711,6 +808,11 @@ func TestCompositeRetriesReserveBeforeSendingAndRefund(t *testing.T) {
 					observed <- reserved.Quota
 				}
 				w.Header().Set("Content-Type", "application/json")
+				if tc.secondFails {
+					w.WriteHeader(http.StatusBadGateway)
+					_, _ = w.Write([]byte(`{"error":{"message":"mock failure","type":"server_error"}}`))
+					return
+				}
 				_, _ = w.Write([]byte(`{"id":"chat-retry","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}`))
 			}))
 			t.Cleanup(server.Close)
@@ -721,17 +823,28 @@ func TestCompositeRetriesReserveBeforeSendingAndRefund(t *testing.T) {
 			_, err = model.UpdateComposite("PPTONE", model.CompositeChange{ExpectedVersion: cfg.Version, Definition: composite_setting.Definition{Enabled: true, Members: []string{"GPT", "IMAGE"}, CrossGroupRetry: tc.cross}, Ratio: common.GetPointer(0.8)}, false)
 			require.NoError(t, err)
 			response := compositeRequest(engine, token, http.MethodPost, "/v1/chat/completions", `{"model":"gpt-5.6","messages":[{"role":"user","content":"hi"}]}`)
-			if tc.cross && tc.balance >= 3200 {
-				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			firstQuota := common.QuotaFromFloat(4000 * tc.firstRatio)
+			secondQuota := common.QuotaFromFloat(4000 * tc.secondRatio)
+			reservedQuota := max(firstQuota, secondQuota)
+			calledSecond := tc.cross && tc.balance >= reservedQuota
+			if calledSecond {
 				select {
 				case quota := <-observed:
-					assert.Equal(t, 1_000_000-3200, quota, "the more expensive member is reserved before upstream submission")
+					assert.Equal(t, tc.balance-reservedQuota, quota, "reserve before sending, retaining earlier reservations until settlement")
 				default:
 					t.Fatal("second member was not called")
 				}
 			} else {
-				assert.GreaterOrEqual(t, response.Code, 400)
 				assert.Empty(t, observed)
+			}
+			if calledSecond && !tc.secondFails {
+				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+				require.NoError(t, model.DB.First(user, user.Id).Error)
+				require.NoError(t, model.DB.First(token, token.Id).Error)
+				assert.Equal(t, tc.balance-secondQuota, user.Quota)
+				assert.Equal(t, tc.balance-secondQuota, token.RemainQuota)
+			} else {
+				assert.GreaterOrEqual(t, response.Code, 400)
 				require.Eventually(t, func() bool {
 					var u model.User
 					var key model.Token

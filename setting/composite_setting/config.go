@@ -1,6 +1,7 @@
 package composite_setting
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -39,7 +40,7 @@ type Snapshot struct {
 }
 
 type identityIndex struct {
-	groups  map[string]Definition
+	groups  map[string]json.RawMessage
 	invalid bool
 }
 
@@ -48,7 +49,7 @@ var identities atomic.Pointer[identityIndex]
 // The index is only for option/token editors. Relay authorization and prices
 // read the database together on every request, never this eventual cache.
 func UpdateIdentityIndex(raw string) error {
-	var groups map[string]Definition
+	var groups map[string]json.RawMessage
 	err := common.UnmarshalJsonStr(raw, &groups)
 	if err == nil && groups == nil {
 		err = errors.New("composite groups must be an object")

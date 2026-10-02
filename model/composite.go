@@ -2,6 +2,7 @@ package model
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -72,6 +73,9 @@ func CompositeHasChannelBindings(db *gorm.DB, name string) (bool, error) {
 
 // ReadCompositeConfig uses one SELECT for the type registry and GroupRatio.
 // This is the request's consistency boundary, including on other instances.
+// On a pricing/definition error, a non-nil config contains the complete type
+// registry only, so callers can still identify ordinary groups. Composite
+// requests and configuration writes must reject the error.
 func ReadCompositeConfig(db *gorm.DB) (*composite_setting.Config, error) {
 	var rows []Option
 	if err := db.Where(clause.IN{Column: clause.Column{Name: "key"}, Values: []any{composite_setting.OptionKey, "GroupRatio"}}).Find(&rows).Error; err != nil {
@@ -84,19 +88,29 @@ func ReadCompositeConfig(db *gorm.DB) (*composite_setting.Config, error) {
 			return nil, errors.New("duplicate composite option rows")
 		}
 		values[row.Key] = row.Value
-		if row.Key == composite_setting.OptionKey {
-			if err := common.UnmarshalJsonStr(row.Value, &cfg.Groups); err != nil || cfg.Groups == nil {
-				return nil, errors.New("invalid composite configuration")
-			}
-		} else {
-			cfg.Ratios = nil
-			if err := common.UnmarshalJsonStr(row.Value, &cfg.Ratios); err != nil || cfg.Ratios == nil {
-				return nil, errors.New("invalid group ratios")
-			}
+	}
+	if raw, exists := values[composite_setting.OptionKey]; exists {
+		var identities map[string]json.RawMessage
+		if err := common.UnmarshalJsonStr(raw, &identities); err != nil || identities == nil {
+			return nil, errors.New("invalid composite registry")
+		}
+		for name := range identities {
+			cfg.Groups[name] = composite_setting.Definition{}
+		}
+		var definitions map[string]composite_setting.Definition
+		if err := common.UnmarshalJsonStr(raw, &definitions); err != nil {
+			return cfg, errors.New("invalid composite configuration")
+		}
+		cfg.Groups = definitions
+	}
+	if raw, exists := values["GroupRatio"]; exists {
+		cfg.Ratios = nil
+		if err := common.UnmarshalJsonStr(raw, &cfg.Ratios); err != nil || cfg.Ratios == nil {
+			return cfg, errors.New("invalid group ratios")
 		}
 	}
 	if len(cfg.Groups) > 0 && values["GroupRatio"] == "" {
-		return nil, errors.New("composite base ratios are missing")
+		return cfg, errors.New("composite base ratios are missing")
 	}
 	encoded, err := common.Marshal(cfg)
 	if err != nil {

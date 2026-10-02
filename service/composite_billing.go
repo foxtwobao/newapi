@@ -42,6 +42,11 @@ func reserveCompositeRetry(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 	if info.PriceData.GroupRatioInfo.GroupRatio == 0 {
 		return nil
 	}
+	// A free model remains free when retries change the member ratio. Only a
+	// request made free by the previous group needs to start billing here.
+	if info.PriceData.FreeModel && (info.PriceData.UsePrice && info.PriceData.ModelPrice == 0 || !info.PriceData.UsePrice && info.PriceData.ModelRatio == 0) {
+		return nil
+	}
 	info.PriceData.FreeModel = false
 	if info.Billing == nil {
 		return PreConsumeBilling(c, quota, info)
