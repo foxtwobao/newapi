@@ -2,6 +2,12 @@
 
 DO NOT send optional commentary
 
+## Local lab database
+
+- When the user refers to lab, use the database configured in `data/tokenone-lab/lab/environment.json`, launched by `deploy/tokenone-lab/run.py lab`. The running lab was verified on 2026-10-18: application port `55200`, PostgreSQL endpoint `127.0.0.1:15440`, database `newapi`.
+- Keep using this database for lab work unless the user explicitly requests a change. Verify the running process connection before querying; do not substitute the dev database at `127.0.0.1:55211/tokenone_dev`, another TokenOne instance, or a snapshot.
+- Read credentials from the existing private environment configuration without printing or copying them into documentation. Configuration comparisons are read-only unless changes are requested.
+
 ## Overview
 
 This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard.
@@ -123,6 +129,7 @@ Inside `relaykit/`, use `kitutil.*` from `relaykit/relayconvert/kitutil/json.go`
 **JavaScript task plugins (mandatory):**
 
 - Before implementing, modifying, or reviewing JavaScript task plugins or their host API/runtime, MUST read [Task Plugin API v1](docs/plugin-api/v1.md), including its description writing and translation conventions. When changing the plugin contract, also check `docs/plugin-api/v1.schema.json` and `docs/plugin-api/v1.d.ts` for consistency.
+- When implementing or changing a TokenONE video plugin's public model or request mapping, MUST follow [TokenONE video plugin conventions](docs/plugin-api/v1.md#tokenone-video-plugin-conventions): use public model identities and one canonical request shape, keep vendor model names and parameters inside the plugin, and verify the shared request contract across providers. These are plugin-authoring requirements; do not introduce host-wide validation or a new runtime framework merely to enforce them.
 - For numeric billing fields in `usageSchema` and `usageProfiles[].schema`, `description` MUST name the **billing subject + unit price**, because it labels the price input in the UI. For example, `image_count` uses `Image generation unit price` / `图片生成单价`, not `Generated image count` / `生成图片张数`; `seconds` uses `Video generation unit price` / `视频生成单价`. The field value remains a usage quantity, not a price.
 - Put units in `unit`. Keep protocol limits, usage sources, defaults, estimation, and settlement details in code comments or technical documentation. Descriptions must be short, equivalent across languages, and free of numeric prices and trailing punctuation. Follow the API document's separate wording rules for actions, booleans, and other enum conditions.
 - Review metadata wording explicitly before completing plugin work. These are authoring requirements; successful compilation, schema validation, or tests do not verify that descriptions follow them.

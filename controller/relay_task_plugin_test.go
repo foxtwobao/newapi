@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,8 +19,12 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay"
+	relaychannel "github.com/QuantumNous/new-api/relay/channel"
+	taskplugin "github.com/QuantumNous/new-api/relay/channel/task/jsplugin"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/perf_metrics_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -57,6 +63,8 @@ func (b *taskSubmissionTestBilling) Reserve(int) error {
 	*b.events = append(*b.events, "reserve")
 	return b.reserveErr
 }
+
+func (b *taskSubmissionTestBilling) ReserveBeforeSubmit(quota int) error { return b.Reserve(quota) }
 
 func TestPresentTaskSubmissionUsesNativePresenterAfterPersistence(t *testing.T) {
 	plugin, err := pluginruntime.CompilePlugin(`
@@ -657,4 +665,386 @@ func TestExecuteTaskSubmissionRefundsWhenFinalReserveFails(t *testing.T) {
 	assert.Equal(t, []string{"reserve", "refund"}, events)
 	assert.Equal(t, 1, billing.refunds)
 	assert.False(t, c.Writer.Written())
+}
+
+func TestVideoSubmitWithoutRetries(t *testing.T) {
+	service.InitHttpClient()
+	oldRetries, oldErrorLog := common.RetryTimes, constant.ErrorLogEnabled
+	common.RetryTimes, constant.ErrorLogEnabled = 0, false
+	t.Cleanup(func() { common.RetryTimes, constant.ErrorLogEnabled = oldRetries, oldErrorLog })
+	withTieredBillingConfig(t, map[string]string{"wan3.0-video": "tiered_expr"}, map[string]string{"wan3.0-video": `tier("base", u("seconds") * 0.1)`})
+	source, err := os.ReadFile("../zhimeng/plugin.js")
+	require.NoError(t, err)
+	registry := pluginruntime.NewRegistry()
+	plugin, err := registry.RegisterFactory(string(source), pluginruntime.Options{})
+	require.NoError(t, err)
+	binding, found := registry.Generation().LookupEndpoint("POST", "/v1/videos", "wan3.0-video")
+	require.True(t, found)
+	for _, tc := range []struct {
+		name     string
+		requests int
+	}{
+		{"invalid JSON after acceptance", 1},
+		{"missing task ID after acceptance", 1},
+		{"truncated response after acceptance", 1},
+		{"disconnect after reading request", 1},
+		{"provider server error", 1},
+		{"explicit rate limit", 1},
+		{"connection refused", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				_, _ = io.Copy(io.Discard, r.Body)
+				w.Header().Set("Content-Type", "application/json")
+				switch tc.name {
+				case "disconnect after reading request":
+					conn, _, hijackErr := w.(http.Hijacker).Hijack()
+					if hijackErr != nil {
+						t.Error(hijackErr)
+						return
+					}
+					_ = conn.Close()
+				case "invalid JSON after acceptance":
+					_, _ = io.WriteString(w, `{`)
+				case "missing task ID after acceptance":
+					_, _ = io.WriteString(w, `{"status":"queued"}`)
+				case "truncated response after acceptance":
+					w.Header().Set("Content-Length", "1000")
+					_, _ = io.WriteString(w, `{"id":"accepted"`)
+				case "provider server error":
+					w.WriteHeader(http.StatusBadGateway)
+				case "explicit rate limit":
+					if requests.Load() == 1 {
+						w.WriteHeader(http.StatusTooManyRequests)
+					} else {
+						w.WriteHeader(http.StatusBadRequest)
+					}
+				}
+			}))
+			t.Cleanup(server.Close)
+			if tc.name == "connection refused" {
+				server.Close()
+			}
+			events := []string{}
+			billing := &taskSubmissionTestBilling{events: &events}
+			c := taskSubmissionTestContext()
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"wan3.0-video","prompt":"cat","duration":2,"resolution":"480P","ratio":"16:9"}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Set("group", "default")
+			c.Set("task_request", map[string]any{"model": "wan3.0-video", "prompt": "cat", "duration": 2, "resolution": "480P", "ratio": "16:9"})
+			c.Set(pluginruntime.ContextKeyPinnedPlugin, pluginruntime.PinnedPlugin{Generation: registry.Generation(), Plugin: plugin})
+			c.Set(pluginruntime.ContextKeyPinnedEndpoint, pluginruntime.PinnedEndpoint{Generation: registry.Generation(), Plugin: plugin, Protocol: "openai_video", Model: "wan3.0-video", Operation: binding.Operation, Candidates: []pluginruntime.ProtocolBinding{binding}})
+			channel := &model.Channel{Id: 1, Name: "video", Type: constant.ChannelTypeTaskPlugin, Key: "test-key", BaseURL: common.GetPointer(server.URL), Status: common.ChannelStatusEnabled}
+			channel.Setting = common.GetPointer(`{"task_plugin_key":"zhimeng"}`)
+			info := taskSubmissionRelayInfo(billing)
+			info.OriginModelName, info.UserGroup = "wan3.0-video", "default"
+			info.LockedChannel = channel
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, server.URL)
+			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeTaskPlugin)
+			var attempts int
+			_, taskErr := executeTaskSubmissionWith(c, info, func(c *gin.Context, info *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+				attempts++
+				return relay.RelayTaskSubmit(c, info)
+			})
+			require.NotNil(t, taskErr)
+			assert.Equal(t, 1, attempts)
+			assert.Equal(t, int32(tc.requests), requests.Load())
+			assert.Equal(t, 1, billing.refunds)
+		})
+	}
+}
+
+func TestWAN3AsynchronousLifecycle(t *testing.T) {
+	service.InitHttpClient()
+	// Keep asynchronous telemetry outside the billing fixture lifetime.
+	metricsEnabled := perf_metrics_setting.GetSetting().Enabled
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{"perf_metrics_setting.enabled": "false"}))
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{"perf_metrics_setting.enabled": fmt.Sprint(metricsEnabled)}))
+	})
+	db, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Channel{}, &model.Task{}, &model.Log{})
+	oldDB, oldLogDB := model.DB, model.LOG_DB
+	oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()
+	oldRedis, oldMemory, oldBatch, oldConsume, oldExport := common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled
+	oldAdaptor := service.GetTaskAdaptorFunc
+	model.DB, model.LOG_DB = db, db
+	common.SetDatabaseTypes(dialect, dialect)
+	common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled = false, false, false, true, false
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = oldDB, oldLogDB
+		common.SetDatabaseTypes(oldMain, oldLog)
+		common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled = oldRedis, oldMemory, oldBatch, oldConsume, oldExport
+		service.GetTaskAdaptorFunc = oldAdaptor
+	})
+	withTieredBillingConfig(t, map[string]string{"wan3.0-video": "tiered_expr", "sd-2-c4": "tiered_expr", "sd-2-c5": "tiered_expr"}, map[string]string{
+		"wan3.0-video": `u("resolution") == "480P" ? tier("480P", u("seconds") * 0.1) : tier("higher", u("seconds") * 0.2)`,
+		"sd-2-c4":      `tier("base", u("video_count") * 0.1)`, "sd-2-c5": `tier("base", u("video_count") * 0.1)`,
+	})
+	for _, key := range []string{"zhimeng", "rolldek"} {
+		source, err := os.ReadFile("../" + key + "/plugin.js")
+		require.NoError(t, err)
+		plugin, err := pluginruntime.NewRegistry().RegisterFactory(string(source), pluginruntime.Options{})
+		require.NoError(t, err)
+		service.GetTaskAdaptorFunc = func(constant.TaskPlatform) service.TaskPollingAdaptor { return taskplugin.New(plugin) }
+		for index, tc := range []struct {
+			name, status            string
+			actual                  any
+			seconds                 float64
+			input                   float64
+			duration                int
+			modelName               string
+			media                   []any
+			pluginKey               string
+			missingReferenceBilling bool
+			completeFirst           bool
+		}{
+			{name: "success", status: "completed", actual: 2, seconds: 2, duration: 5},
+			{name: "missing usage", status: "completed", seconds: 5, duration: 5},
+			{name: "invalid usage", status: "completed", actual: -1, seconds: 5, duration: 5},
+			{name: "failed", status: "failed", actual: 2, duration: 5},
+			{name: "reference input over fifteen seconds", status: "completed", actual: 2, seconds: 18, input: 16, duration: 2},
+			{name: "reference total over thirty seconds", status: "completed", actual: 20, seconds: 36, input: 16, duration: 20},
+			{name: "reference missing usage", status: "completed", seconds: 35, input: 16, duration: 5},
+			{name: "reference failure", status: "failed", actual: 2, input: 16, duration: 2},
+			{name: "verified reference input", pluginKey: "zhimeng", status: "completed", actual: 2, seconds: 5.019, input: 3.019, duration: 2},
+			{name: "reference completes on first poll", pluginKey: "zhimeng", status: "completed", actual: 2, seconds: 5.019, input: 3.019, duration: 2, completeFirst: true},
+			{name: "reference billing unavailable", pluginKey: "zhimeng", status: "completed", actual: 2, seconds: 17, input: 3.019, duration: 2, missingReferenceBilling: true},
+			{name: "reference output unavailable", pluginKey: "zhimeng", status: "completed", seconds: 17, input: 3.019, duration: 2},
+			{name: "reference invalid total", pluginKey: "zhimeng", status: "completed", actual: 30, seconds: 17, input: 3.019, duration: 2},
+			{name: "reference upper reservation", pluginKey: "zhimeng", status: "completed", actual: 20, seconds: 23.019, input: 3.019, duration: 20},
+			{name: "reference failed refund", pluginKey: "zhimeng", status: "failed", actual: 2, input: 3.019, duration: 2},
+			{name: "first frame", status: "completed", actual: 2, seconds: 2, duration: 5, media: []any{map[string]any{"type": "first_frame", "url": "https://example.com/first.png"}}},
+			{name: "first and last frame missing usage", status: "completed", seconds: 5, duration: 5, media: []any{map[string]any{"type": "first_frame", "url": "https://example.com/first.png"}, map[string]any{"type": "last_frame", "url": "https://example.com/last.png"}}},
+			{name: "first frame failure", status: "failed", duration: 5, media: []any{map[string]any{"type": "first_frame", "url": "https://example.com/first.png"}}},
+			{name: "Seedance c4 short success", modelName: "sd-2-c4", status: "completed", actual: 15, seconds: 1, duration: 4},
+			{name: "Seedance c5 long missing usage", modelName: "sd-2-c5", status: "completed", seconds: 1, duration: 15, media: []any{map[string]any{"type": "reference_video", "url": "https://example.com/reference.mp4"}, map[string]any{"type": "reference_audio", "url": "https://example.com/audio.wav"}}},
+			{name: "Seedance c5 failure", modelName: "sd-2-c5", status: "failed", duration: 4},
+		} {
+			if (tc.pluginKey != "" && tc.pluginKey != key) || (tc.input > 0 && tc.pluginKey == "" && key != "rolldek") || (tc.modelName != "" && key != "zhimeng") {
+				continue
+			}
+			t.Run(key+"/"+tc.name, func(t *testing.T) {
+				modelName, resolution := "wan3.0-video", "480P"
+				if tc.modelName != "" {
+					modelName, resolution = tc.modelName, "720P"
+				}
+				var submissions atomic.Int32
+				var queries atomic.Int32
+				var billingQueries atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					assert.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
+					w.Header().Set("Content-Type", "application/json")
+					if r.URL.Path == "/api/log/token/" {
+						http.Redirect(w, r, "/api/log/token", http.StatusMovedPermanently)
+						return
+					}
+					if r.URL.Path == "/api/log/token" {
+						billingQueries.Add(1)
+						rows := []any{}
+						if !tc.missingReferenceBilling && queries.Load() <= 1 {
+							other, marshalErr := common.Marshal(map[string]any{"is_task": true, "task_id": "vendor-job", "reference_video_charge": map[string]any{"seconds": tc.input, "resolution": resolution, "video_count": 1}})
+							if !assert.NoError(t, marshalErr) {
+								return
+							}
+							rows = append(rows, map[string]any{"type": 2, "model_name": modelName, "other": string(other)})
+						}
+						encoded, marshalErr := common.Marshal(map[string]any{"success": true, "data": rows})
+						if !assert.NoError(t, marshalErr) {
+							return
+						}
+						_, _ = w.Write(encoded)
+						return
+					}
+					if r.Method == http.MethodPost {
+						submissions.Add(1)
+						var body map[string]any
+						if !assert.NoError(t, common.DecodeJson(r.Body, &body)) {
+							w.WriteHeader(http.StatusBadRequest)
+							return
+						}
+						if tc.modelName != "" {
+							assert.Len(t, body, 3)
+							assert.Equal(t, modelName, body["model"])
+							assert.Equal(t, map[string]any{"duration": float64(tc.duration), "resolution": "720p", "ratio": "16:9"}, body["parameters"])
+						}
+						_, _ = io.WriteString(w, `{"id":"vendor-job","status":"queued"}`)
+						return
+					}
+					assert.Equal(t, "/v1/videos/vendor-job", r.URL.Path)
+					if queries.Add(1) == 1 && !tc.completeFirst {
+						_, _ = io.WriteString(w, `{"status":"in_progress","progress":50}`)
+						return
+					}
+					body := map[string]any{"status": tc.status, "content": map[string]any{"url": "https://cdn.example/video.mp4"}, "metadata": map[string]any{"url": "https://cdn.example/video.mp4"}, "error": nil}
+					if tc.actual != nil {
+						body["seconds"] = tc.actual
+						body["usage"] = map[string]any{"output_video_duration": tc.actual, "input_video_duration": tc.input}
+						if key == "rolldek" {
+							body["metadata"].(map[string]any)["usage"] = body["usage"]
+							delete(body, "usage")
+						}
+					}
+					encoded, marshalErr := common.Marshal(body)
+					if marshalErr != nil {
+						t.Error(marshalErr)
+						return
+					}
+					_, _ = w.Write(encoded)
+				}))
+				t.Cleanup(server.Close)
+				initial := common.QuotaRound(20 * common.QuotaPerUnit)
+				user := model.User{Username: fmt.Sprintf("%s_user_%d", key, index), AffCode: fmt.Sprintf("%s_aff_%d", key, index), Quota: initial}
+				require.NoError(t, db.Create(&user).Error)
+				channel := model.Channel{Name: key, Type: constant.ChannelTypeTaskPlugin, Key: "test-key", BaseURL: common.GetPointer(server.URL), Status: common.ChannelStatusEnabled}
+				channel.Setting = common.GetPointer(`{"task_plugin_key":"` + key + `"}`)
+				require.NoError(t, db.Create(&channel).Error)
+				c := taskSubmissionTestContext()
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{}`))
+				c.Set("group", "default")
+				c.Set("username", user.Username)
+				request := map[string]any{"model": modelName, "prompt": "cat", "duration": tc.duration, "resolution": resolution, "ratio": "16:9"}
+				estimatedSeconds := tc.duration
+				if tc.media != nil {
+					request["metadata"] = map[string]any{"input": map[string]any{"media": tc.media}}
+				}
+				if tc.input > 0 {
+					request["metadata"] = map[string]any{"input": map[string]any{"media": []any{map[string]any{"type": "reference_video", "url": "https://example.com/reference.mp4"}}}}
+					estimatedSeconds += 30
+					if key == "zhimeng" {
+						estimatedSeconds = min(tc.duration+15, 30)
+					}
+				}
+				if tc.modelName != "" {
+					estimatedSeconds = 1
+				}
+				c.Set("task_request", request)
+				c.Set(pluginruntime.ContextKeyPinnedPlugin, pluginruntime.PinnedPlugin{Plugin: plugin})
+				c.Set(pluginruntime.ContextKeyPinnedEndpoint, pluginruntime.PinnedEndpoint{Plugin: plugin, Protocol: "openai_video", Model: modelName})
+				common.SetContextKey(c, constant.ContextKeyOriginalModel, modelName)
+				common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, server.URL)
+				common.SetContextKey(c, constant.ContextKeyChannelKey, "test-key")
+				common.SetContextKey(c, constant.ContextKeyChannelId, channel.Id)
+				common.SetContextKey(c, constant.ContextKeyChannelType, channel.Type)
+				c.Request.Header.Set("Authorization", "Bearer test-key")
+				info := taskSubmissionRelayInfo(nil)
+				info.UserId, info.OriginModelName, info.UserGroup = user.Id, modelName, "default"
+				info.IsPlayground, info.UserSetting.BillingPreference = true, "wallet_only"
+				info.PublicTaskID, info.LockedChannel = model.GenerateTaskID(), &channel
+				outcome, taskErr := executeTaskSubmission(c, info)
+				require.Nil(t, taskErr, "%+v", taskErr)
+				require.NotNil(t, outcome)
+				var task model.Task
+				require.NoError(t, db.Where("task_id = ?", info.PublicTaskID).First(&task).Error)
+				assert.JSONEq(t, string(outcome.Result.PluginState), string(task.PrivateData.PluginState))
+				assert.Equal(t, modelName, task.Properties.OriginModelName)
+				assert.Equal(t, modelName, task.Properties.UpstreamModelName)
+				assert.Equal(t, common.QuotaRound(float64(estimatedSeconds)*0.1*common.QuotaPerUnit), task.Quota)
+				ids := map[int][]string{channel.Id: {"vendor-job"}}
+				require.NoError(t, service.UpdateVideoTasks(t.Context(), constant.TaskPlatform(key), ids, map[string]*model.Task{"vendor-job": &task}))
+				require.NoError(t, db.First(&task, task.ID).Error)
+				if !tc.completeFirst {
+					assert.Equal(t, model.TaskStatus(model.TaskStatusInProgress), task.Status)
+					if key != "zhimeng" || tc.input == 0 {
+						assert.JSONEq(t, string(outcome.Result.PluginState), string(task.PrivateData.PluginState))
+					} else if !tc.missingReferenceBilling {
+						assert.Contains(t, string(task.PrivateData.PluginState), `"referenceVideoBilling"`)
+					}
+					require.NoError(t, service.UpdateVideoTasks(t.Context(), constant.TaskPlatform(key), ids, map[string]*model.Task{"vendor-job": &task}))
+					require.NoError(t, db.First(&task, task.ID).Error)
+				}
+				want := common.QuotaRound(tc.seconds * 0.1 * common.QuotaPerUnit)
+				assert.Equal(t, want, task.Quota)
+				if tc.status == "failed" {
+					assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), task.Status)
+				} else {
+					assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
+				}
+				var updated model.User
+				require.NoError(t, db.First(&updated, user.Id).Error)
+				assert.Equal(t, initial-want, updated.Quota)
+				assert.Equal(t, want, updated.UsedQuota)
+				var logs []model.Log
+				require.NoError(t, db.Where("user_id = ?", user.Id).Find(&logs).Error)
+				for _, log := range logs {
+					assert.Equal(t, modelName, log.ModelName)
+					assert.Equal(t, channel.Id, log.ChannelId)
+					assert.NotContains(t, log.Other, "test-key")
+				}
+				logCount := len(logs)
+				require.NoError(t, service.UpdateVideoTasks(t.Context(), constant.TaskPlatform(key), ids, map[string]*model.Task{"vendor-job": &task}))
+				require.NoError(t, db.First(&updated, user.Id).Error)
+				assert.Equal(t, initial-want, updated.Quota, "duplicate completion must not charge or refund again")
+				var count int64
+				require.NoError(t, db.Model(&model.Log{}).Where("user_id = ?", user.Id).Count(&count).Error)
+				assert.Equal(t, int64(logCount), count)
+				assert.Equal(t, int32(1), submissions.Load())
+				if key == "zhimeng" && tc.input > 0 && !tc.missingReferenceBilling {
+					assert.Equal(t, int32(2), billingQueries.Load(), "preflight plus one measured-input lookup; persisted input survives log eviction")
+				}
+			})
+		}
+	}
+}
+
+func TestZhimengSeedanceContent(t *testing.T) {
+	fixture := setupGenericTaskTest(t)
+	allowPrivateTaskMediaTest(t)
+	source, err := os.ReadFile("../zhimeng/plugin.js")
+	require.NoError(t, err)
+	plugin, err := pluginruntime.NewRegistry().RegisterFactory(string(source), pluginruntime.Options{})
+	require.NoError(t, err)
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		assert.Empty(t, request.Header.Get("Authorization"))
+		assert.Empty(t, request.Header.Get("Cookie"))
+		assert.Equal(t, "bytes=0-3", request.Header.Get("Range"))
+		response.Header().Set("Content-Type", "video/mp4")
+		response.Header().Set("Content-Range", "bytes 0-3/10")
+		response.WriteHeader(http.StatusPartialContent)
+		if request.Method == http.MethodGet {
+			_, _ = io.WriteString(response, "data")
+		}
+	}))
+	t.Cleanup(upstream.Close)
+	adaptor := taskplugin.New(plugin)
+	adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "https://provider.example", ApiKey: "provider-key", ChannelType: constant.ChannelTypeTaskPlugin}})
+	for _, modelName := range []string{"sd-2-c4", "sd-2-c5"} {
+		state, err := common.Marshal(map[string]any{"model": modelName, "duration": 4, "resolution": "720P", "hasReferenceVideo": false})
+		require.NoError(t, err)
+		task := &model.Task{TaskID: "public-job", ChannelId: fixture.ChannelId, Status: model.TaskStatusSuccess, Properties: model.Properties{OriginModelName: modelName, UpstreamModelName: modelName}, PrivateData: model.TaskPrivateData{UpstreamTaskID: "vendor-job", PluginState: state}}
+		for _, body := range []map[string]any{
+			{"status": "completed", "content": map[string]any{"url": upstream.URL + "/video.mp4"}},
+			{"status": "completed", "object": upstream.URL + "/video.mp4"},
+		} {
+			task.Data, err = common.Marshal(body)
+			require.NoError(t, err)
+			for _, method := range []string{http.MethodGet, http.MethodHead} {
+				descriptor, err := adaptor.BuildContentRequest(t.Context(), task, "video", relaychannel.TaskArtifactClientRequest{Method: method})
+				require.NoError(t, err)
+				require.True(t, descriptor.Credentialless)
+				assert.Empty(t, descriptor.Headers)
+				assert.Equal(t, upstream.URL+"/video.mp4", descriptor.URL)
+				recorder := httptest.NewRecorder()
+				ctx, _ := gin.CreateTestContext(recorder)
+				ctx.Request = httptest.NewRequest(method, "/v1/videos/public-job/content", nil)
+				ctx.Request.Header.Set("Range", "bytes=0-3")
+				ctx.Request.Header.Set("Authorization", "Bearer client-key")
+				ctx.Request.Header.Set("Cookie", "session=client-cookie")
+				require.NoError(t, proxyTaskMedia(ctx, task, descriptor))
+				assert.Equal(t, http.StatusPartialContent, recorder.Code)
+				assert.Equal(t, "bytes 0-3/10", recorder.Header().Get("Content-Range"))
+				if method == http.MethodHead {
+					assert.Empty(t, recorder.Body.String())
+				} else {
+					assert.Equal(t, "data", recorder.Body.String())
+				}
+			}
+		}
+		for _, body := range []string{`{"status":"completed"}`, `{"status":"in_progress","content":{"url":"https://cdn.example/early.mp4"}}`} {
+			task.Data = []byte(body)
+			_, err := adaptor.BuildContentRequest(t.Context(), task, "video", relaychannel.TaskArtifactClientRequest{Method: http.MethodGet})
+			require.ErrorContains(t, err, "Seedance video URL is unavailable")
+		}
+	}
 }

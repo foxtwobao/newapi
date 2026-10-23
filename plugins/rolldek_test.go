@@ -24,7 +24,7 @@ func TestRollDekStandalonePlugin(t *testing.T) {
 	assert.Equal(t, "rolldek", plugin.Meta.Key)
 	assert.Empty(t, plugin.Meta.ChannelTypes)
 	assert.Equal(t, "https://rolldek.com", plugin.Meta.BaseURL)
-	assert.Len(t, plugin.Meta.Models, 12)
+	assert.ElementsMatch(t, []string{"wan3.0-video", "wan3.0-video-prime"}, plugin.Meta.Models)
 	_, ok := registry.Get("alibaba")
 	assert.True(t, ok)
 	for _, model := range plugin.Meta.Models {
@@ -44,61 +44,40 @@ func TestRollDekStandalonePlugin(t *testing.T) {
 		}
 		return rolldekMap(t, value), nil
 	}
-	model := "wan3.0-video-480p"
-	decoded, err := decode(model, map[string]any{
-		"model": model, "prompt": "a cat", "seconds": "10", "resolution": "1080P", "ratio": "9:16",
-		"reference_videos": []any{map[string]any{"url": "https://example.com/a.mp4", "duration": 5}, "https://example.com/a.mp4"},
-		"reference_images": []any{map[string]any{"url": "https://example.com/cat.png"}},
-	})
-	require.NoError(t, err)
-	ctx := map[string]any{
-		"model": model, "upstreamModel": model, "baseUrl": "https://rolldek.com", "apiKey": "key",
-		"requestBody": decoded["requestBody"],
+	for _, family := range []string{"wan3.0-video", "wan3.0-video-prime", "wan3.0-image", "wan3.0-image-prime"} {
+		for _, resolution := range []string{"480p", "720p", "1080p"} {
+			name := family + "-" + resolution
+			t.Run("removed/"+name, func(t *testing.T) {
+				assert.Empty(t, registry.Generation().LookupEndpointCandidates("POST", "/v1/videos", name))
+				_, err := decode(name, map[string]any{"prompt": "cat", "duration": 5})
+				require.ErrorContains(t, err, "unsupported RollDek model")
+				for _, clientModel := range []string{name, "custom-alias"} {
+					ctx := map[string]any{"model": clientModel, "upstreamModel": name, "requestBody": map[string]any{"prompt": "cat", "duration": 5}}
+					for _, hook := range []string{"buildSubmitRequest", "extractUsage"} {
+						_, err := plugin.Engine.Call(t.Context(), hook, ctx)
+						require.ErrorContains(t, err, "unsupported RollDek model")
+					}
+				}
+			})
+		}
 	}
-	value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", ctx)
+	// Aliases may target a public model; the resolution suffix is only added
+	// when building the provider request.
+	aliasCtx := map[string]any{
+		"model": "my-wan", "upstreamModel": "wan3.0-video", "baseUrl": "https://rolldek.com", "apiKey": "key",
+		"requestBody": map[string]any{"prompt": "a cat", "duration": 5, "resolution": "720P"},
+	}
+	value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", aliasCtx)
 	require.NoError(t, err)
 	request := rolldekMap(t, value)
+	assert.NotContains(t, request, "model")
 	assert.Equal(t, "https://rolldek.com/v1/videos", request["url"])
-	body := request["body"].(map[string]any)
-	assert.Equal(t, model, body["model"])
-	assert.Equal(t, "10", body["seconds"])
-	assert.Equal(t, "480P", body["size"])
-	assert.Equal(t, "480P", body["resolution"])
-	assert.Equal(t, "9:16", body["aspect_ratio"])
-	assert.Len(t, body["reference_videos"], 1)
-	value, err = plugin.Engine.Call(t.Context(), "extractUsage", ctx)
-	require.NoError(t, err)
-	assert.Equal(t, float64(15), rolldekMap(t, value)["seconds"])
-	aliasCtx := map[string]any{
-		"model": "my-wan", "upstreamModel": "wan3.0-video-720p", "baseUrl": "https://rolldek.com", "apiKey": "key",
-		"requestBody": map[string]any{"model": "my-wan", "prompt": "a cat", "seconds": "5"},
-	}
-	value, err = plugin.Engine.Call(t.Context(), "buildSubmitRequest", aliasCtx)
-	require.NoError(t, err)
-	aliasBody := rolldekMap(t, value)["body"].(map[string]any)
+	aliasBody := request["body"].(map[string]any)
 	assert.Equal(t, "wan3.0-video-720p", aliasBody["model"])
 	assert.Equal(t, "720P", aliasBody["size"])
-
-	value, err = plugin.Engine.Call(t.Context(), "extractUsageOnComplete", map[string]any{"model": model}, map[string]any{}, map[string]any{
-		"usage": map[string]any{"output_video_duration": 10, "input_video_duration": 6},
-	})
-	require.NoError(t, err)
-	assert.Equal(t, float64(16), rolldekMap(t, value)["seconds"])
-	value, err = plugin.Engine.Call(t.Context(), "extractUsageOnComplete", map[string]any{"model": model}, map[string]any{}, map[string]any{"status": "completed"})
-	require.NoError(t, err)
-	assert.Empty(t, rolldekMap(t, value))
-	value, err = plugin.Engine.Call(t.Context(), "extractUsageOnComplete", map[string]any{"model": "wan3.0-image-720p"}, map[string]any{}, map[string]any{
-		"usage": map[string]any{"output_video_duration": 8, "input_video_duration": 9},
-	})
-	require.NoError(t, err)
-	assert.Equal(t, float64(8), rolldekMap(t, value)["seconds"])
-
-	_, err = decode("wan3.0-image-720p", map[string]any{"prompt": "cat", "reference_videos": []any{"https://example.com/a.mp4"}})
-	require.ErrorContains(t, err, "do not support reference videos")
-	_, err = decode("wan3.0-image-720p", map[string]any{"prompt": "cat"})
-	require.ErrorContains(t, err, "require a reference image")
-	_, err = decode(model, map[string]any{"prompt": "cat", "seconds": 0})
-	require.ErrorContains(t, err, "between 1 and 3600")
+	assert.Equal(t, "5", aliasBody["seconds"])
+	_, err = decode("wan3.0-video", map[string]any{"prompt": "cat", "duration": 0})
+	require.ErrorContains(t, err, "between 2 and 30")
 
 	value, err = plugin.Engine.Call(t.Context(), "buildQueryRequest", map[string]any{"baseUrl": "https://rolldek.com", "apiKey": "key", "taskId": "task_1"})
 	require.NoError(t, err)

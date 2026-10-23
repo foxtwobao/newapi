@@ -1,20 +1,14 @@
-const MODELS = [
-  "wan3.0-video-480p", "wan3.0-video-720p", "wan3.0-video-1080p",
-  "wan3.0-video-prime-480p", "wan3.0-video-prime-720p", "wan3.0-video-prime-1080p",
-  "wan3.0-image-480p", "wan3.0-image-720p", "wan3.0-image-1080p",
-  "wan3.0-image-prime-480p", "wan3.0-image-prime-720p", "wan3.0-image-prime-1080p",
-];
-
+const WAN3_MODELS = ["wan3.0-video", "wan3.0-video-prime"];
 export const meta = {
   apiVersion: 1,
   key: "rolldek",
   name: "RollDek",
   icon: "text:RD",
   description: { en: "RollDek WAN 3.0 video generation", zh: "RollDek 万相 3.0 视频生成" },
-  version: "1.0.0",
+  version: "2.0.0",
   author: { name: "Community" },
   baseUrl: "https://rolldek.com",
-  models: MODELS,
+  models: WAN3_MODELS,
   fetchMode: "per_task",
   usageSchema: {
     seconds: {
@@ -23,106 +17,161 @@ export const meta = {
       description: { en: "Video generation unit price", zh: "视频生成单价" },
     },
   },
-  protocols: [{ name: "openai_video", models: MODELS }],
+  usageProfiles: [
+    { models: WAN3_MODELS, schema: {
+      seconds: { type: "number", unit: "second", description: { en: "Video generation unit price", zh: "视频生成单价" } },
+      resolution: { enum: ["480P", "720P", "1080P"], description: { en: "Output video resolution", zh: "输出视频分辨率" } },
+    } },
+  ],
+  protocols: ["openai_video"],
 };
 
-function profile(model) {
-  const match = /^wan3\.0-(video|image)(-prime)?-(480|720|1080)p$/.exec(model || "");
-  if (!match) throw new Error("unsupported RollDek model: " + model);
-  return { image: match[1] === "image", size: match[3] + "P" };
-}
+const LEGACY_SIZES = {
+  "480P": { "16:9": "832*480", "9:16": "480*832", "1:1": "624*624" },
+  "720P": { "16:9": "1280*720", "9:16": "720*1280", "1:1": "960*960", "4:3": "1088*832", "3:4": "832*1088" },
+  "1080P": { "16:9": "1920*1080", "9:16": "1080*1920", "1:1": "1440*1440", "4:3": "1632*1248", "3:4": "1248*1632" },
+};
 
-function duration(req) {
-  if (req.seconds !== undefined && req.duration !== undefined && Number(req.seconds) !== Number(req.duration))
-    throw new Error("seconds and duration must match");
-  const value = req.seconds ?? req.duration ?? 5;
-  if (typeof value !== "string" && typeof value !== "number") throw new Error("seconds must be an integer");
-  const seconds = Number(value);
-  if (!Number.isInteger(seconds) || seconds < 1 || seconds > 3600) throw new Error("seconds must be an integer between 1 and 3600");
-  return seconds;
-}
+// Wan2.7 changed the pixel sizes for 4:3 and 3:4. Legacy sizes remain valid
+// compatibility inputs, but never replace the target model's native sizes.
+const MODERN_SIZES = {
+  "720P": { "16:9": "1280*720", "9:16": "720*1280", "1:1": "960*960", "4:3": "1104*832", "3:4": "832*1104" },
+  "1080P": { "16:9": "1920*1080", "9:16": "1080*1920", "1:1": "1440*1440", "4:3": "1648*1248", "3:4": "1248*1648" },
+};
 
-function publicURL(value, field) {
-  if (typeof value !== "string" || !/^https:\/\/[^/?#]+(?:[/?#]|$)/i.test(value)) throw new Error(field + " must be a public HTTPS URL");
-  return value;
-}
-
-function media(req, imageModel) {
-  if (req.input !== undefined && (!req.input || typeof req.input !== "object" || Array.isArray(req.input)))
-    throw new Error("input must be an object");
-  const images = req.reference_images ?? [];
-  const videos = req.reference_videos ?? [];
-  const audios = req.reference_audios ?? [];
-  const advanced = req.input && req.input.media !== undefined ? req.input.media : [];
-  if (!Array.isArray(images) || !Array.isArray(videos) || !Array.isArray(audios) || !Array.isArray(advanced))
-    throw new Error("reference media and input.media must be arrays");
-  if (images.length > 10) throw new Error("too many reference images");
-  const refs = { images: [], videos: [], audios: [], advanced: [] };
-  const videoURLs = new Set();
-  let inputVideoSeconds = 0;
-  let imageCount = 0;
-  for (const image of images) {
-    if (!image || typeof image !== "object" || Array.isArray(image) || ![undefined, "reference_image", "first_frame", "last_frame"].includes(image.role))
-      throw new Error("invalid reference image");
-    refs.images.push({ url: publicURL(image.url, "reference image"), role: image.role || "reference_image" });
-    imageCount++;
-  }
-  function addVideo(video) {
-    if (imageModel) throw new Error("image models do not support reference videos");
-    const url = publicURL(typeof video === "string" ? video : video && video.url, "reference video");
-    if (videoURLs.has(url)) return;
-    videoURLs.add(url);
-    const hint = typeof video === "object" && video !== null ? video.duration ?? video.seconds : undefined;
-    const estimated = hint === undefined ? 30 : Number(hint);
-    if (!Number.isFinite(estimated) || estimated <= 0 || estimated > 3600) throw new Error("reference video duration must be between 0 and 3600");
-    inputVideoSeconds += estimated;
-    refs.videos.push({ url });
-  }
-  for (const video of videos) addVideo(video);
-  for (const audio of audios) refs.audios.push({ url: publicURL(audio && audio.url, "reference audio") });
-  for (const item of advanced) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("invalid input.media item");
-    const type = item.type;
-    if (!["reference_image", "first_frame", "last_frame", "reference_video", "reference_audio"].includes(type))
-      throw new Error("invalid input.media type");
-    const url = publicURL(item.url, "input.media URL");
-    if (type === "reference_video") addVideo(item);
-    else if (type === "reference_audio") refs.advanced.push({ type, url });
-    else {
-      imageCount++;
-      refs.advanced.push({ type, url });
+function videoSize(value) {
+  const size = value.trim().replace(/x/i, "*");
+  if (/^(480|720|1080)p?$/i.test(size)) return { resolution: size.toUpperCase().replace(/P?$/, "P") };
+  for (const sizes of [LEGACY_SIZES, MODERN_SIZES]) {
+    for (const resolution of Object.keys(sizes)) {
+      for (const ratio of Object.keys(sizes[resolution])) {
+        if (sizes[resolution][ratio] === size) return { resolution, ratio };
+      }
     }
   }
-  if (imageCount > 10) throw new Error("too many reference images");
-  if (imageModel && imageCount === 0) throw new Error("image models require a reference image");
-  return { refs, inputVideoSeconds };
+  throw new Error("invalid size");
 }
 
-function normalize(req, model) {
+// These public request rules are kept in each standalone upload. Changes must
+// pass the cross-provider decoder regressions in plugins/wan3_channels_test.go.
+function normalizeWan3Request(req, model, provider) {
   if (!req || typeof req !== "object" || Array.isArray(req)) throw new Error("request body must be an object");
-  if (typeof req.prompt !== "string" || !req.prompt.trim()) throw new Error("prompt is required");
-  const target = profile(model);
-  const seconds = duration(req);
-  const { refs, inputVideoSeconds } = media(req, target.image);
-  if (seconds + inputVideoSeconds > 3600) throw new Error("estimated billable seconds exceed 3600");
-  const ratio = req.aspect_ratio ?? req.ratio;
-  if (ratio !== undefined && !["16:9", "9:16", "1:1", "adaptive"].includes(ratio)) throw new Error("invalid aspect_ratio");
-  const body = { model, prompt: req.prompt.trim(), seconds: String(seconds), size: target.size, resolution: target.size };
-  if (ratio !== undefined) body.aspect_ratio = ratio;
-  if (refs.images.length) body.reference_images = refs.images;
-  if (refs.videos.length) body.reference_videos = refs.videos;
-  if (refs.audios.length) body.reference_audios = refs.audios;
-  if (refs.advanced.length) body.input = { media: refs.advanced };
-  return { body, billableSeconds: seconds + inputVideoSeconds };
+  const allowed = ["model", "prompt", "duration", "seconds", "resolution", "size", "ratio", "aspect_ratio", "metadata", "media", "audio", "seed", "prompt_extend", "watermark", "auto_duration"];
+  for (const key of Object.keys(req)) {
+    if (!allowed.includes(key)) throw new Error("unsupported WAN3 parameter: " + key + "; use metadata.input.media and metadata.parameters");
+  }
+  const metadata = req.metadata === undefined ? {} : req.metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) throw new Error("metadata must be an object");
+  if (metadata.model !== undefined) throw new Error("can't change model with metadata");
+  const input = metadata.input === undefined ? {} : metadata.input;
+  const parameters = metadata.parameters === undefined ? {} : metadata.parameters;
+  for (const item of [{ value: input, name: "metadata.input", allowed: ["prompt", "media"] },
+    { value: parameters, name: "metadata.parameters", allowed: ["duration", "seconds", "resolution", "size", "ratio", "aspect_ratio", "audio", "seed", "prompt_extend", "watermark"] }]) {
+    if (!item.value || typeof item.value !== "object" || Array.isArray(item.value)) throw new Error(item.name + " must be an object");
+    for (const key of Object.keys(item.value)) {
+      if (!item.allowed.includes(key)) throw new Error("unsupported WAN3 parameter: " + item.name + "." + key);
+    }
+  }
+  const values = {};
+  for (const source of [req, parameters, input]) {
+    for (const key of Object.keys(source)) {
+      const name = key === "seconds" ? "duration" : key === "aspect_ratio" ? "ratio" : key;
+      if (!["duration", "resolution", "size", "ratio", "prompt", "audio", "seed", "prompt_extend", "watermark"].includes(name)) continue;
+      let value = source[key];
+      if (name === "duration") {
+        if ((typeof value !== "number" && typeof value !== "string") || String(value).trim() === "") throw new Error("duration must be an integer between 2 and 30");
+        value = Number(value);
+        if (!Number.isInteger(value) || (value !== -1 && (value < 2 || value > 30))) throw new Error("duration must be an integer between 2 and 30");
+        if (value === -1 && provider !== "alibaba") throw new Error("automatic duration is not supported by " + provider);
+      } else if (name === "resolution") {
+        if (typeof value !== "string" || !/^(480|720|1080)p?$/i.test(value.trim())) throw new Error("resolution must be 480P, 720P or 1080P");
+        value = value.trim().toUpperCase().replace(/P?$/, "P");
+      } else if (name === "size") {
+        if (typeof value !== "string" || !value.trim()) throw new Error("invalid size");
+        const size = videoSize(value.trim().toUpperCase().replace("X", "*"));
+        for (const dimension of ["resolution", "ratio"]) {
+          if (size[dimension] === undefined) continue;
+          if (values[dimension] !== undefined && values[dimension] !== size[dimension]) throw new Error("conflicting WAN3 parameter: " + dimension);
+          values[dimension] = size[dimension];
+        }
+        continue;
+      } else if (name === "ratio") {
+        if (typeof value !== "string") throw new Error("invalid ratio");
+        value = value.trim().toLowerCase();
+        if (value === "auto") value = "adaptive";
+        if (!["16:9", "9:16", "1:1", "4:3", "3:4", "adaptive"].includes(value)) throw new Error("invalid ratio");
+        if (provider === "rolldek" && !["16:9", "9:16", "1:1", "adaptive"].includes(value)) throw new Error("unsupported RollDek ratio");
+      } else if (name === "prompt") {
+        if (typeof value !== "string") throw new Error("prompt must be a string");
+      } else if (name === "seed") {
+        if (!Number.isInteger(value) || value < -1 || value > 2147483647) throw new Error("seed must be an integer between -1 and 2147483647");
+      } else if (typeof value !== "boolean") throw new Error(name + " must be a boolean");
+      if (provider === "rolldek" && ["audio", "seed", "prompt_extend", "watermark"].includes(name)) throw new Error("unsupported RollDek parameter: " + name);
+      if (values[name] !== undefined && values[name] !== value) throw new Error("conflicting WAN3 parameter: " + name);
+      values[name] = value;
+    }
+  }
+  if (req.auto_duration !== undefined) {
+    if (typeof req.auto_duration !== "boolean") throw new Error("auto_duration must be a boolean");
+    if (provider !== "alibaba") throw new Error("automatic duration is not supported by " + provider);
+    if ((req.auto_duration && values.duration !== undefined && values.duration !== -1) || (!req.auto_duration && values.duration === -1)) throw new Error("conflicting WAN3 parameter: duration");
+    if (req.auto_duration) values.duration = -1;
+  }
+  const resolution = values.resolution === undefined ? "1080P" : values.resolution;
+  if (!["480P", "720P", "1080P"].includes(resolution)) throw new Error("resolution must be 480P, 720P or 1080P");
+  const ratio = values.ratio === undefined ? "adaptive" : values.ratio;
+  if (provider === "rolldek" && !["16:9", "9:16", "1:1", "adaptive"].includes(ratio)) throw new Error("unsupported RollDek ratio");
+  if (req.media !== undefined && input.media !== undefined) throw new Error("use only one media source");
+  const media = input.media === undefined ? (req.media === undefined ? [] : req.media) : input.media;
+  if (!Array.isArray(media)) throw new Error("metadata.input.media must be an array");
+  const counts = {};
+  const limits = { first_frame: 1, last_frame: 1, reference_image: 10, reference_video: 5, reference_audio: 5 };
+  if (provider === "alibaba") { limits.file = 1; limits.link = 1; }
+  const normalizedMedia = [];
+  for (const item of media) {
+    if (!item || typeof item !== "object" || Array.isArray(item) || !Object.prototype.hasOwnProperty.call(limits, item.type)) throw new Error("unsupported WAN3 media type; use reference_audio for audio references");
+    for (const key of Object.keys(item)) {
+      if (!["type", "url"].includes(key)) throw new Error("unsupported WAN3 media parameter: " + key);
+    }
+    if (typeof item.url !== "string" || !item.url.trim()) throw new Error("media URL is required");
+    if (!/^https:\/\/[^/?#\s]+(?:[/?#]|$)/i.test(item.url)) throw new Error("media URLs must use HTTPS");
+    counts[item.type] = (counts[item.type] || 0) + 1;
+    if (counts[item.type] > limits[item.type]) throw new Error("too many input.media entries for " + item.type);
+    normalizedMedia.push({ type: item.type, url: item.url });
+  }
+  const frames = counts.first_frame || counts.last_frame;
+  const references = counts.reference_image || counts.reference_video || counts.reference_audio || counts.file || counts.link;
+  if ((frames && references) || (counts.file && counts.link) || (counts.last_frame && !counts.first_frame)) throw new Error("unsupported wan3.0 input.media combination");
+  // No Zhimeng media enters shared scheduling until its reference semantics
+  // and, for video, actual billed input duration have been verified.
+  if (provider === "zhimeng" && media.length) throw new Error("Zhimeng media inputs are not enabled");
+  const prompt = values.prompt === undefined ? "" : values.prompt;
+  if (!prompt.trim() && (provider !== "alibaba" || !media.length)) throw new Error("prompt is required");
+  const advanced = {};
+  for (const key of ["audio", "seed", "prompt_extend", "watermark"]) {
+    if (values[key] !== undefined) advanced[key] = values[key];
+  }
+  const result = { model, prompt, resolution, ratio, metadata: Object.assign({}, metadata, { input: { media: normalizedMedia }, parameters: advanced }) };
+  if (values.duration === -1) result.auto_duration = true;
+  else result.duration = values.duration === undefined ? 5 : values.duration;
+  return result;
+}
+
+function rolldekVideoRequest(ctx) {
+  const model = ctx.upstreamModel || ctx.model;
+  if (WAN3_MODELS.includes(ctx.model) && model !== ctx.model) throw new Error("public WAN3 models must not be mapped to resolution suffixes");
+  if (!WAN3_MODELS.includes(model)) throw new Error("unsupported RollDek model: " + model);
+  return normalizeWan3Request(ctx.requestBody, ctx.model, "rolldek");
 }
 
 export function buildSubmitRequest(ctx) {
   const model = ctx.upstreamModel || ctx.model;
-  const request = normalize(ctx.requestBody, model);
+  const req = rolldekVideoRequest(ctx);
   return {
     url: ctx.baseUrl + "/v1/videos", method: "POST",
     headers: { Authorization: "Bearer " + ctx.apiKey, "Content-Type": "application/json" },
-    body: request.body,
+    body: { model: model + "-" + req.resolution.toLowerCase(), prompt: req.prompt, seconds: String(req.duration),
+      size: req.resolution, resolution: req.resolution, aspect_ratio: req.ratio, input: req.metadata.input },
   };
 }
 
@@ -130,20 +179,43 @@ export function parseSubmitResponse(ctx, resp) {
   const body = resp.body || {};
   const taskId = body.id || body.task_id;
   if (!taskId) throw new Error("task_id is empty");
-  return { taskId, taskData: body };
+  const req = rolldekVideoRequest(ctx);
+  return { taskId, taskData: body, state: { duration: req.duration, resolution: req.resolution,
+    hasReferenceVideo: req.metadata.input.media.some(item => item.type === "reference_video"),
+    upstreamModel: (ctx.upstreamModel || ctx.model) + "-" + req.resolution.toLowerCase() } };
 }
 
 export function extractUsage(ctx) {
-  return { seconds: normalize(ctx.requestBody, ctx.upstreamModel || ctx.model).billableSeconds };
+  const req = rolldekVideoRequest(ctx);
+  // Reserve the existing 30-second estimate for each distinct reference video.
+  // This is not a provider limit; measured input and output replace it on completion.
+  const videoURLs = new Set();
+  for (const item of req.metadata.input.media) {
+    if (item.type === "reference_video") videoURLs.add(item.url);
+  }
+  const facts = { seconds: req.duration + videoURLs.size * 30 };
+  if (ctx.usagePurpose !== "billing_ratios") facts.resolution = req.resolution;
+  return facts;
 }
 
 export function extractUsageOnComplete(task, result, body) {
-  const usage = (body && body.usage) || {};
-  const output = usage.output_video_duration ?? usage.duration;
+  if (!WAN3_MODELS.includes(task.upstreamModel || task.model)) throw new Error("unsupported RollDek model: " + (task.upstreamModel || task.model));
+  if (!result || result.status !== "SUCCESS") return {};
+  // RollDek's task endpoint nests WAN usage under metadata. Keep the
+  // existing top-level form authoritative when present; never merge two
+  // partial reports into a billable total.
+  const usage = body && (body.usage ?? (body.metadata && body.metadata.usage));
+  if (!usage) throw new Error("missing RollDek WAN3 completion usage; retaining reserved usage");
+  const output = usage.output_video_duration === undefined ? usage.duration : usage.output_video_duration;
   const input = usage.input_video_duration;
-  if (output === undefined || (!profile(task.upstreamModel || task.model).image && input === undefined)) return {};
-  const total = Number(output) + (profile(task.upstreamModel || task.model).image ? 0 : Number(input));
-  return Number.isFinite(total) && total >= 0 ? { seconds: total } : {};
+  if (typeof output !== "number" || !Number.isFinite(output) || output < 0 ||
+    typeof input !== "number" || !Number.isFinite(input) || input < 0 || !Number.isFinite(output + input))
+    throw new Error("invalid RollDek WAN3 completion duration; retaining reserved usage");
+  // Reference video billing follows complete measured input and output usage,
+  // without assuming another provider's business limits; the
+  // host validates the total against its second-unit safety ceiling.
+  // Resolution remains the frozen submission fact, not a provider override.
+  return { seconds: output + input };
 }
 
 export function buildQueryRequest(ctx) {
@@ -177,9 +249,8 @@ export const protocols = {
   openai_video: {
     decodeRequest: function (ctx) {
       if (!ctx.body || ctx.body.kind !== "json") throw new Error("JSON body required");
-      const req = ctx.body.value;
-      const resolved = normalize(req, ctx.upstreamModel || ctx.model);
-      return { kind: "submit", model: ctx.model, action: "video_generation", requestBody: Object.assign({}, req, { model: ctx.model, seconds: resolved.body.seconds }) };
+      const requestBody = rolldekVideoRequest({ model: ctx.model, upstreamModel: ctx.upstreamModel, requestBody: ctx.body.value });
+      return { kind: "submit", model: ctx.model, action: "video_generation", requestBody };
     },
     render: function (ctx, task) { return task.data || {}; },
   },
