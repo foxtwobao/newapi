@@ -303,7 +303,7 @@ export const meta = {
     en: "Volcengine Doubao Seedance video generation and Seedream image generation",
     zh: "火山引擎豆包 Seedance 视频生成与 Seedream 图片生成",
   },
-  version: "1.4.0",
+  version: "1.4.1",
   author: { name: "QuantumNous" },
   channelTypes: [54, 45], // VolcEngine-type channels serve Ark video models with the same wire format
   models: Object.keys(VIDEO_MODELS).concat(Object.keys(IMAGE_MODELS)),
@@ -1020,6 +1020,19 @@ export function buildContentRequest(ctx) {
     url = trimmed(urls[ctx.artifactKey]);
   }
   if (!url) throw new Error("artifact_not_found");
+  // Compatible providers may expose an authenticated content endpoint instead
+  // of a signed storage URL. Only send the channel key to this task's exact
+  // HTTPS endpoint; CDN URLs, other tasks and arbitrary paths stay anonymous.
+  const base = trimmed(ctx.baseUrl).replace(/\/+$/, "");
+  const taskId = trimmed(ctx.upstreamTaskId);
+  if (
+    ctx.artifactKey === "video" &&
+    /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?$/.test(base) &&
+    /^[A-Za-z0-9_-]+$/.test(taskId) &&
+    url === base + "/v1/videos/" + taskId + "/content"
+  ) {
+    return { url: url, method: ctx.clientRequest.method, headers: { Authorization: "Bearer " + ctx.apiKey } };
+  }
   return { url: url, method: ctx.clientRequest.method, credentialless: true };
 }
 

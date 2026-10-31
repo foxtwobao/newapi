@@ -1224,3 +1224,41 @@ func TestDoubaoNativeOfficialBodies(t *testing.T) {
 		require.ErrorContains(t, err, "AuthenticationError: the API key is invalid")
 	})
 }
+
+func TestDoubaoContentAuthentication(t *testing.T) {
+	_, plugin := newDoubaoPlugin(t)
+	for _, tc := range []struct {
+		name, base, url, artifact, taskID string
+		auth                              bool
+	}{
+		{"provider content", "https://rolldek.com", "https://rolldek.com/v1/videos/task_vendor/content", "video", "task_vendor", true},
+		{"trailing slash", "https://rolldek.com/", "https://rolldek.com/v1/videos/task_vendor/content", "video", "task_vendor", true},
+		{"signed CDN", "https://rolldek.com", "https://cdn.example/video.mp4?signature=test", "video", "task_vendor", false},
+		{"other host", "https://rolldek.com", "https://rolldek.com.evil.example/v1/videos/task_vendor/content", "video", "task_vendor", false},
+		{"userinfo", "https://rolldek.com", "https://rolldek.com@evil.example/v1/videos/task_vendor/content", "video", "task_vendor", false},
+		{"other port", "https://rolldek.com", "https://rolldek.com:8443/v1/videos/task_vendor/content", "video", "task_vendor", false},
+		{"plaintext", "http://rolldek.com", "http://rolldek.com/v1/videos/task_vendor/content", "video", "task_vendor", false},
+		{"other task", "https://rolldek.com", "https://rolldek.com/v1/videos/task_other/content", "video", "task_vendor", false},
+		{"missing task", "https://rolldek.com", "https://rolldek.com/v1/videos/task_vendor/content", "video", "", false},
+		{"other path", "https://rolldek.com", "https://rolldek.com/video.mp4", "video", "task_vendor", false},
+		{"frame", "https://rolldek.com", "https://rolldek.com/v1/videos/task_vendor/content", "last_frame", "task_vendor", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, method := range []string{"GET", "HEAD"} {
+				value, err := plugin.Engine.Call(t.Context(), "buildContentRequest", map[string]any{
+					"baseUrl": tc.base, "apiKey": "provider-test-key", "upstreamTaskId": tc.taskID, "artifactKey": tc.artifact,
+					"data":          map[string]any{"content": map[string]any{"video_url": tc.url, "last_frame_url": tc.url}},
+					"clientRequest": map[string]any{"method": method},
+				})
+				require.NoError(t, err)
+				want := map[string]any{"url": tc.url, "method": method}
+				if tc.auth {
+					want["headers"] = map[string]any{"Authorization": "Bearer provider-test-key"}
+				} else {
+					want["credentialless"] = true
+				}
+				assert.Equal(t, want, alibabaObject(t, value))
+			}
+		})
+	}
+}
