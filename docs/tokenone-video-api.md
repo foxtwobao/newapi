@@ -1,344 +1,365 @@
-# TokenONE 视频模型调用指南
+# TokenONE 标准视频 API 调用规范
 
-本文面向通过 TokenONE API 生成视频的开发者。按模型介绍参数与示例，不需要了解供应商接口、插件内部模型名或渠道密钥。
+规范版本：1；更新日期：2026-10-31。本文为仓库内部的公共契约与自定义视频插件开发规范。
 
-本文目前仅覆盖 `wan3.0-video`、`wan3.0-video-prime` 两个模型。其他视频模型不能直接套用这些参数；模型是否对你的账号开放，以 TokenONE 当前配置为准。
+对客户发布使用 [TokenONE 视频 API 客户文档](tokenone-video-api-public.md)，不发布本文的提供方信息、插件映射和未上线型号能力。客户文档同时维护通用契约与已上线模型的 TokenONE 参数要求；型号条目只展示转换后的公共字段、取值、限制和调用示例，具体型号要求在上线后逐项补充。
 
-## 1. 接口与鉴权
+本规范定义统一调用契约。**规范发布不等于所有部署中的插件已经升级**：模型是否开放、具体能力是否已适配，以当前账号和部署版本为准。未适配的请求可以明确失败，应用不得自动删参数、降级或改走供应商私有协议。下列型号表是适配标准，其中 RollDek SD、H3 新档位及 Veo 公共参数映射等仍需插件实现后才能使用。
 
-下文 `TOKENONE_BASE_URL` 是你的 TokenONE API 根地址，**不包含 `/v1`**；`TOKENONE_API_KEY` 是你的 TokenONE API 令牌，不是供应商令牌。
+本文约束 TokenONE 自行维护、声明遵守此规范的视频插件（当前包括 RollDek、知梦，后续新增自定义视频插件同样遵守）。公共 Doubao、Alibaba 等历史插件及其原生入口保留原协议，不因本文被强制改造。统一采用公共参数，供应商差异由插件转换；不要求各模型支持相同的能力全集。
 
-| 用途 | 方法 | 路径 |
+## 1. 接口、鉴权与任务 ID
+
+| 操作 | 方法 | 路径 |
 | --- | --- | --- |
-| 创建视频任务 | POST | `/v1/videos` |
-| 查询视频任务 | GET | `/v1/videos/{id}` |
-| 下载视频 | GET | `/v1/videos/{id}/content` |
-| 查询视频响应头 | HEAD | `/v1/videos/{id}/content` |
+| 创建视频 | POST | `/v1/videos` |
+| 查询任务 | GET | `/v1/videos/{id}` |
+| 下载成片 | GET | `/v1/videos/{id}/content` |
+| 获取下载响应头 | HEAD | `/v1/videos/{id}/content` |
 
-所有请求携带 `Authorization: Bearer TOKENONE_API_KEY`，创建任务额外设置 `Content-Type: application/json`。令牌应保存在业务服务端，不要写入网页、移动端安装包、公开仓库或日志。
+- API 根地址不包含 `/v1`。例如 `https://token.agentone.work`；自建部署使用其实际地址。
+- 所有请求携带 `Authorization: Bearer <TokenONE 用户 API Token>`；创建请求使用 `Content-Type: application/json`。
+- `id` 始终是创建响应中的 **TokenONE 公共任务 ID**。不要使用供应商内部任务 ID，也不要依赖旧字段 `task_id`。
+- TokenONE 用户 Token 保存在应用服务端；供应商渠道密钥仅保存在 TokenONE 服务端。客户端不识别供应商、不解析供应商结果 URL、不持有渠道密钥。
+- 查询与下载必须有权访问原任务，不能通过更换账号或渠道绕过任务归属、模型权限和渠道约束。
 
-```bash
-export TOKENONE_BASE_URL='https://token.agentone.work'
-export TOKENONE_API_KEY='YOUR_TOKENONE_API_KEY'
-```
+流程：创建一次 → 保存 `id` → 查询同一任务 → `completed` 后下载并保存。下载失败只能恢复原任务的查询或下载，不能自动重新生成。
 
-以上地址为 TokenONE API 地址，令牌为占位符，请替换为自己的 TokenONE API 令牌。媒体示例中的 `example.com` 也必须替换为真实可访问的文件地址。
-
-调用流程：**创建 → 保存返回的 `id` → 查询状态 → 完成后下载并自行保存**。创建成功不代表视频生成完成。
-
-TokenONE 负责选择当前账号可用的渠道并转换请求。客户端不指定供应商，也不为模型拼接画质后缀。任务创建后，查询和下载始终使用原任务 `id`，不要按当前选中的模型重新创建任务。
-
-### 参数支持范围
-
-同一模型统一使用本文的请求格式。部分参数并非所有服务渠道都支持：如果你的账号没有可处理该请求的渠道，接口会报错。此时请保留错误信息并联系平台确认，不要自动删除参数或素材后重试，以免生成结果偏离用户要求。
-
-## 2. 模型速查
-
-| 模型 ID | 输出时长 | 分辨率 | 宽高比 | 默认值：时长 / 分辨率 / 宽高比 |
-| --- | --- | --- | --- | --- |
-| `wan3.0-video` | 2–30 秒整数 | `480P`、`720P`、`1080P` | `16:9`、`9:16`、`1:1`、`4:3`、`3:4`、`adaptive` | 5 秒 / `1080P` / `adaptive` |
-| `wan3.0-video-prime` | 2–30 秒整数 | `480P`、`720P`、`1080P` | `16:9`、`9:16`、`1:1`、`4:3`、`3:4`、`adaptive` | 5 秒 / `1080P` / `adaptive` |
-
-`4:3`、`3:4` 可以直接填写，无需额外开关；如果账号没有支持该宽高比的渠道，请求会报错。
-
-建议每次填写时长、分辨率和宽高比。`adaptive` 表示由模型自动选择宽高比；需要固定横屏或竖屏时，分别填写 `16:9` 或 `9:16`。`720P` 等表示分辨率档位，实际像素尺寸还取决于宽高比。
-
-## 3. WAN3 标准模型：wan3.0-video
-
-### 请求参数
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `model` | string | 是 | 固定为 `wan3.0-video` |
-| `prompt` | string | 是 | 描述希望生成的画面、动作或镜头；不能是空字符串或只有空格。提供素材时也要填写 |
-| `duration` | integer | 否 | 视频时长，2–30 秒，默认 5 秒 |
-| `resolution` | string | 否 | 分辨率：`480P`、`720P`、`1080P`，默认 `1080P` |
-| `ratio` | string | 否 | 宽高比：`16:9`、`9:16`、`1:1`、`4:3`、`3:4`、`adaptive`，默认 `adaptive` |
-| `metadata.input.media` | array | 否 | 参考素材列表；仅通过文字生成视频时省略。素材类型与组合见下表 |
-| `metadata.parameters` | object | 否 | 声音、提示词扩展、水印和随机种子设置，见下文；不需要设置时省略 |
-
-### 素材类型与组合
-
-每项仅填写 `type` 和 `url`，例如 `{"type":"first_frame","url":"https://example.com/start.jpg"}`。
-
-| type | 用途 | 数量与限制 |
-| --- | --- | --- |
-| `first_frame` | 首帧图片 | 最多 1 张，可单独使用 |
-| `last_frame` | 尾帧图片 | 最多 1 张，必须搭配首帧 |
-| `reference_image` | 供模型参考的图片，不指定为首帧或尾帧 | 最多 10 张 |
-| `reference_audio` | 供模型参考的音频文件 | 最多 5 段 |
-| `reference_video` | 供模型参考的视频文件 | 最多 5 段；账号须有支持参考视频的渠道 |
-
-- 首帧、首尾帧模式不能与普通参考图、参考视频、参考音频混用。
-- 普通参考图和音频可以组合使用；添加参考视频后，仅支持参考视频的渠道可以处理请求。
-- 素材文件仍需满足处理服务对格式、大小和时长的要求；未超过数量上限，也可能因文件不符合要求而失败。
-- 用 `type` 指定图片用途：首帧填 `first_frame`，尾帧填 `last_frame`，一般参考图填 `reference_image`。不要仅靠数组顺序区分首尾帧。
-
-### 声音、水印等可选设置
-
-以下字段都放在 `metadata.parameters` 中，不是必填项。账号须有支持这些设置的渠道，否则请求会报错。
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `audio` | boolean | 是否为生成的视频生成声音：`true` 开启，`false` 关闭；省略则使用模型默认设置 |
-| `prompt_extend` | boolean | 是否让模型自动扩展提示词：`true` 开启，`false` 关闭；省略则使用模型默认设置 |
-| `watermark` | boolean | 是否添加水印：`true` 添加，`false` 不添加；省略则使用模型默认设置 |
-| `seed` | integer | 随机种子，取值 `-1` 至 `2147483647`，可以填 `0`；不指定时省略 |
-
-例如，想生成带声音的视频，填写 `"audio": true`。想提供一段自己的音频作为参考，则在 `metadata.input.media` 中添加 `{"type":"reference_audio","url":"https://example.com/audio.wav"}`。前者设置输出视频的声音，后者提供输入素材。
-
-只填写你需要控制的选项。例如，不设置水印时省略 `watermark`，要求不加水印时才填写 `"watermark": false`。固定 `seed` 不保证每次生成完全相同的视频。
-
-以下示例请求生成带声音、不加水印的视频，并开启提示词扩展：
+## 2. 标准创建请求
 
 ```json
 {
   "model": "wan3.0-video",
-  "prompt": "海浪拍打礁石，伴随自然的海浪声，镜头缓缓推进",
-  "duration": 5,
+  "prompt": "人物缓缓转身",
+  "duration": 6,
   "resolution": "720P",
   "ratio": "16:9",
-  "metadata": {
-    "parameters": {
-      "audio": true,
-      "prompt_extend": true,
-      "watermark": false,
-      "seed": 0
-    }
-  }
-}
-```
-
-### 文字生成视频
-
-```bash
-curl --fail-with-body -X POST "$TOKENONE_BASE_URL/v1/videos" \
-  -H "Authorization: Bearer $TOKENONE_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"wan3.0-video","prompt":"海浪拍打礁石，镜头缓缓推进","duration":2,"resolution":"480P","ratio":"16:9"}'
-```
-
-### 使用首帧图片生成视频
-
-以下 JSON 作为 `POST /v1/videos` 的请求体：
-
-```json
-{
-  "model": "wan3.0-video",
-  "prompt": "首帧中的人物缓缓转头，镜头保持稳定",
-  "duration": 2,
-  "resolution": "720P",
-  "ratio": "9:16",
   "metadata": {
     "input": {
       "media": [
         {"type": "first_frame", "url": "https://example.com/start.jpg"}
       ]
-    }
+    },
+    "parameters": {}
   }
 }
 ```
 
-### 使用参考图片和参考音频生成视频
+示例素材地址必须替换为真实可访问文件。只在获得真实生成授权的环境中执行创建示例；创建可能产生费用。
 
-```json
-{
-  "model": "wan3.0-video",
-  "prompt": "参考图片中的人物外观和场景，配合参考音频的氛围生成短片",
-  "duration": 5,
-  "resolution": "720P",
-  "ratio": "16:9",
-  "metadata": {
-    "input": {
-      "media": [
-        {"type": "reference_image", "url": "https://example.com/person.jpg"},
-        {"type": "reference_image", "url": "https://example.com/scene.jpg"},
-        {"type": "reference_audio", "url": "https://example.com/ambience.wav"}
-      ]
-    }
-  }
-}
-```
+### 2.1 公共字段
 
-### 使用参考视频生成视频
-
-账号没有支持参考视频的渠道时，以下请求会报错。
-
-```json
-{
-  "model": "wan3.0-video",
-  "prompt": "参考视频中的镜头运动，生成同样节奏的城市短片",
-  "duration": 2,
-  "resolution": "720P",
-  "ratio": "16:9",
-  "metadata": {
-    "input": {
-      "media": [
-        {"type": "reference_video", "url": "https://example.com/motion.mp4"}
-      ]
-    }
-  }
-}
-```
-
-## 4. WAN3 Prime 模型：wan3.0-video-prime
-
-模型 ID 为 `wan3.0-video-prime`。**请求字段、默认值、时长、分辨率、宽高比及素材组合规则与标准模型相同**。能调用标准模型不代表能调用 Prime；两者的访问权限和价格分别设置。
-
-上一节的示例将 `model` 改为 `wan3.0-video-prime` 即可用于 Prime。以下示例同时提供首帧和尾帧图片：
-
-```json
-{
-  "model": "wan3.0-video-prime",
-  "prompt": "人物从首帧姿态自然过渡到尾帧姿态，动作平滑，镜头保持稳定",
-  "duration": 2,
-  "resolution": "720P",
-  "ratio": "9:16",
-  "metadata": {
-    "input": {
-      "media": [
-        {"type": "first_frame", "url": "https://example.com/start.jpg"},
-        {"type": "last_frame", "url": "https://example.com/end.jpg"}
-      ]
-    }
-  }
-}
-```
-
-`model` 固定填写 `wan3.0-video-prime`，不要拼接 `-720p` 等后缀。分辨率通过 `resolution` 单独设置。
-
-## 5. 素材地址与填写注意事项
-
-### 素材 URL
-
-- 使用公网可下载的 **HTTPS 文件地址**，不要填写素材展示网页的地址。
-- 本文的创建接口通过 URL 接收素材，不接收直接上传的文件、Base64、`data:`、`blob:`、本地路径或 `/api/files/...` 等相对地址。本地文件需先上传至你自己的文件存储服务，再传入下载地址。
-- 私有素材可以使用带有效期的签名下载地址。有效期要覆盖任务排队、素材下载和处理过程。
-- URL 不能依赖浏览器 Cookie 或登录态。不要把 TokenONE API Key 拼入素材 URL。
-- 创建成功后，任务仍可能因链接过期、无法下载或文件不符合要求而失败。
-
-### 参数不要重复填写
-
-统一使用本文的字段：时长填 `duration`，分辨率填 `resolution`，宽高比填 `ratio`，素材填 `metadata.input.media`。不要同时发送 `seconds`、`size`、`aspect_ratio` 或顶层 `media` 等其他写法，以免参数冲突。
-
-不要发送 `n`、`fps`、`width`、`height`、`images`、`input_reference` 等本文未列出的参数，不要假定 OpenAI 视频 SDK 的所有字段、上传和编辑操作均受支持。每次创建请求对应一个任务。
-
-## 6. 创建响应与状态查询
-
-创建成功的响应是视频任务对象。以下仅为结构示例，不保证进度值和额外字段完全相同：
-
-```json
-{
-  "id": "task_EXAMPLE",
-  "object": "video",
-  "model": "wan3.0-video",
-  "status": "queued",
-  "progress": 0,
-  "created_at": 1792324500
-}
-```
-
-**保存 `id`，不要依赖 `task_id` 字段，也不要使用供应商内部 ID。** 查询时使用原任务所属账号的有效 TokenONE 令牌。
-
-```bash
-export TASK_ID='task_EXAMPLE'
-curl --fail-with-body "$TOKENONE_BASE_URL/v1/videos/$TASK_ID" \
-  -H "Authorization: Bearer $TOKENONE_API_KEY"
-```
-
-| status | 含义 | 客户端行为 |
+| 字段 | JSON 类型 | 含义与规则 |
 | --- | --- | --- |
-| `queued` | 已排队 | 稍后查询 |
-| `in_progress` | 生成或处理结果中 | 稍后查询 |
-| `completed` | 已完成 | 下载并保存视频，停止轮询 |
-| `failed` | 已失败 | 停止轮询，展示返回的错误信息（若有） |
+| `model` | string | 必填，公共模型身份，准确 ID 见第 4 节。不要拼供应商名称或分辨率后缀 |
+| `prompt` | string | 必填非空提示词；长度按模型限制，不能静默截断 |
+| `duration` | number | 输出视频秒数；当前可控时长的型号均要求整数。Veo/Omni 不接受此字段 |
+| `resolution` | string | 输出分辨率档位，如 480P、720P、768P、1080P、2K；只接受对应型号的集合 |
+| `ratio` | string | 输出宽高比，如 16:9、9:16、adaptive；只接受对应型号的集合 |
+| `metadata` | object | 可省略；仅包含约定的 input、parameters，不是任意透传容器 |
+| `metadata.input` | object | 可省略；素材放在 media 中 |
+| `metadata.input.media` | array | 可省略或空数组；每项仅含 type、url |
+| `metadata.parameters` | object | 可省略或 {}；按模型扩展白名单校验，未知字段报错 |
 
-建议每隔 10–20 秒查询一次，遇到限流时延长间隔。任务状态由 TokenONE 后台更新，更频繁查询不会加快生成或状态更新。以 `status` 为准：只有 `completed` 表示完成，不能仅凭 `progress` 为 `100` 判定成功。
+`720P` 表示分辨率档位，不承诺输出恰好为 1280×720；像素尺寸还取决于画幅。不得把 768P 近似为 720P，或把 2K 改成 1080P。`adaptive` 表示允许模型自动选择画幅，与“未提供 ratio”不同。
 
-完成响应示例：
+一次创建对应一个任务。本规范不默认开放 `n`、`fps`、`width`、`height`、任意 `headers`、文件上传、视频编辑或其他 OpenAI SDK 字段。需要扩展时必须明确型号、语义、限制和计费影响，不能假定接口路径相同即全部兼容。
+
+### 2.2 省略、零值与默认值
+
+- 基本字段缺省值见第 4 节。先处理别名及冲突，再只为未提供字段补默认值，不覆盖用户选择。
+- 显式 `0`、`false`、`null` 与未提供不是同一回事。合法的 `seed: 0`、布尔 `false` 必须保留；非法 null、错误类型、超界值必须报错。
+- 当前型号均不接受 `duration: 0` 或 `duration: -1`。不把 -1 当成省略或默认时长。
+- 非必填扩展未传就不传上游，不统一补 false，也不强求不同供应商内部默认值相同。要求关闭某能力时应明确传 false，并由插件检查是否支持。
+- 同一公共模型使用相同的基本字段缺省语义。提供方不支持本次默认组合时拒绝本次请求；用户显式选择该提供方支持的组合时仍可处理，不永久排除该渠道。
+
+### 2.3 兼容别名
+
+新应用仅使用标准字段。插件可以保留明确登记的旧写法，但必须归一后检查冲突：
+
+| 兼容写法 | 标准字段 | 规则 |
+| --- | --- | --- |
+| seconds | duration | 历史整数字符串 "6" 与数字 6 可等价；标准 duration 仍须数字 |
+| aspect_ratio | ratio | 标准化后不一致则拒绝；已登记的 auto 等价于 adaptive |
+| size: "720P" | resolution | 与标准字段比较，冲突则拒绝 |
+| size: "1280x720" | resolution + ratio | 只接受本型号登记的精确映射；不能近似猜测其他尺寸 |
+| 历史扩展或素材位置 | 对应标准字段 | 必须逐项登记；不能让扩展覆盖公共字段，不能合并多套有歧义的素材来源 |
+
+例如同时提交 `duration: 6` 与 `seconds: "5"` 必须报错；同时提交等价的 6 可以接受。别名不能绕过数量、范围或计费校验。
+
+## 3. 统一素材结构
+
+| type | 含义 | 规则 |
+| --- | --- | --- |
+| first_frame | 指定首帧 | 最多一张；只有型号支持时可用 |
+| last_frame | 指定尾帧 | 最多一张；本期型号必须同时提供首帧 |
+| reference_image | 主体、外观、风格参考图 | 不得自动改成首帧 |
+| reference_video | 动作、镜头等参考视频 | 不能携带客户端自报的计费时长 |
+| reference_audio | 输入参考音频 | 与输出声音开关 audio 独立 |
+
+每项为 `{"type":"reference_image","url":"https://example.com/image.jpg"}`。角色决定语义；即使 last_frame 在数组中先出现，也必须正确转换为尾帧。普通参考素材保留相对顺序；转为分类数组时保留每类内部顺序。首尾帧与参考模式是否可混用，以具体型号规则为准。
+
+素材必须是上游可读取的公网文件地址，不是展示网页、相对路径、本地路径、Base64、data URL、blob URL 或需要浏览器 Cookie 的页面。普通模型推荐 HTTPS；明确支持 HTTP 的提供方可接受公网 HTTP。不要将 TokenONE Token 放在 URL 中。
+
+签名 URL 有效期需覆盖排队和处理过程，但**并非所有模型接受任意签名链接**：知梦 Seedance 2.5 要求 H3 专用 public_url；Veo/Omni 要求知梦工作台存储图片且不允许查询参数或片段。当前统一接口不提供代上传服务，应用不需要新增供应商密钥或上传协议；不符合素材要求时明确报错。纯文生视频不受素材地址限制影响。
+
+URL 格式、数量与组合由插件预检；实际格式、文件大小、真实时长和可读性由上游读取文件后校验。不能将“通过 URL 校验”解释为必然生成成功。客户端自报 duration、tokens、charge 等素材字段不接受、不作为计费依据。
+
+## 4. 模型参数与能力
+
+下面是标准适配范围，不是上线清单。同一公共模型在不同提供方的能力可以不同；应用构造公共请求，TokenONE 负责最终校验。分组接入未适配插件而导致错误时，应用正常展示错误，不自动换格式或修改参数。
+
+### 4.1 基本参数
+
+为简化表格：R3 = `16:9、9:16、1:1`；R6 = R3 加 `4:3、3:4、21:9`；R8 = R6 加 `3:2、2:3`。
+
+| 公共 model | duration | resolution | ratio | 缺省：秒 / 分辨率 / 画幅 |
+| --- | --- | --- | --- | --- |
+| wan3.0-video、wan3.0-video-prime | 2–30 整数 | 480P、720P、1080P | 16:9、9:16、1:1、4:3、3:4、adaptive；具体提供方可为子集 | 5 / 1080P / adaptive |
+| sd-2.0-ch1 | 4–15 整数 | 720P | R8 | 4 / 720P / 16:9 |
+| sd-2.5-ch1、sd-2.5-ch2 | 4–30 整数 | 720P | R8 | 4 / 720P / 16:9 |
+| sd-2.5-ch3 | 4–30 整数 | 720P | R6 | 4 / 720P / 16:9 |
+| sd-2-c4 | 4–15 整数 | 720P | R3 | 5 / 720P / 16:9 |
+| sd-2-c5 | 4–15 整数 | 720P | R6 | 5 / 720P / 16:9 |
+| sd2.5-官链-满参考-受排队影响 | 4–30 整数，必填 | 720P | R6 | 无时长默认值 / 720P / 16:9 |
+| sd2.5-官转-30图10音频-火山词元 | 4–30 整数，必填 | 720P | R6 | 无时长默认值 / 720P / 16:9 |
+| MiniMax-H3 | 4–30 整数；2K 最长 15 秒 | 480P、768P、1080P、2K | R6 + adaptive | 4 / 2K / adaptive |
+| 六款 Veo/Omni（下表） | 不支持，不能传入 | 由型号固定 | 16:9、9:16 | 不传时长 / 型号固定 / 画幅必填 |
+
+SD 独立型号不自动等价于官方 Doubao 型号，不应互相替换。MiniMax-H3 使用上述公共大小写；供应商的 minimax-h3 由插件转换。Veo/Omni 不能根据工作台的“8 秒”展示文字推导可控或保证时长。
+
+提示词限制：sd-2-c4/c5 去除首尾空白后为 1–10000 字符；两款知梦 Seedance 2.5 沿用 7000 字符上限；Veo/Omni 同时限制 10000 Unicode 字符和 UTF-8 16 KiB。其他表列型号要求非空，未公布的字符上限不擅自编造，也不截断用户内容。
+
+### 4.2 素材能力
+
+I/V/A 分别指普通参考图片/视频/音频数量上限。首尾帧各至多一张，普通参考限额不能用来推断支持首尾帧。
+
+| 型号 / 提供方 | 首帧与首尾帧 | I / V / A | 组合规则 |
+| --- | --- | --- | --- |
+| WAN3 两款 / RollDek、知梦 | 单首帧、首尾帧 | 10 / 5 / 5 | 首尾帧与普通参考互斥；RollDek 参考素材总数 ≤20 |
+| sd-2.0-ch1 / RollDek | 未开放 | 9 / 3 / 3 | 分类参考；仅音频组合尚未确认，暂不开放 |
+| sd-2.5-ch1 / RollDek | 仅成对首尾帧 | 30 / 10 / 10 | 帧与参考互斥；仅音频组合尚未确认，暂不开放 |
+| sd-2.5-ch2 / RollDek | 仅成对首尾帧 | 10 / 10 / 10 | 帧与参考互斥；仅音频组合尚未确认，暂不开放 |
+| sd-2.5-ch3 / RollDek | 仅成对首尾帧 | 9 / 0 / 0 | 帧与参考图互斥，不支持参考视频/音频 |
+| sd-2-c4、sd-2-c5 / 知梦 | 单首帧、首尾帧 | 图片含帧合计 9 / 3 / 3；总数 ≤15 | 沿用已有帧与参考混用能力，不套用 WAN3 的互斥规则 |
+| sd2.5-官链-满参考-受排队影响 / 知梦 | 不支持角色映射 | 30 / 10 / 10 | 仅分类参考，使用 H3 public_url |
+| sd2.5-官转-30图10音频-火山词元 / 知梦 | 不支持角色映射 | 30 / 0 / 10 | 不支持参考视频，使用 H3 public_url |
+| MiniMax-H3 / 知梦 | 单首帧、首尾帧 | 9 / 3 / 3 | 统一入口保持 frames 与 references 互斥 |
+
+Veo/Omni 均支持文生视频，仅支持图片输入，不支持帧与普通参考混用：
+
+| 公共型号（知梦） | 固定分辨率 | 单首帧 | 首尾帧 | 普通参考图 |
+| --- | --- | --- | --- | --- |
+| veo-3.1-lite | 720P | 支持 | 支持 | 不支持 |
+| veo-3.1-fast | 720P | 支持 | 支持 | 恰好 3 张 |
+| veo-3.1 | 720P | 支持 | 支持 | 不支持 |
+| veo-3.1-fast-1080p | 1080P | 不支持 | 不支持 | 不支持 |
+| veo-3.1-1080p | 1080P | 支持 | 支持 | 不支持 |
+| omni-flash-video | 720P | 不支持 | 不支持 | 1–3 张 |
+
+提供方差异留在 TokenONE 侧。RollDek WAN3 的画幅集合为 R3 + adaptive；知梦 WAN3 另支持 4:3、3:4。应用不维护渠道能力交集或并集，不因为某分组不兼容就切换到供应商原生接口。
+
+### 4.3 文件限制
+
+| 提供方 / 家族 | 地址与文件限制 |
+| --- | --- |
+| RollDek WAN3 | 公网 HTTPS；视频、音频均每段 1–15 秒，各自合计 ≤15 秒；相同参考视频 URL 的时长只计一次 |
+| RollDek 四款 SD | 公网 HTTPS；文档未枚举文件大小或时长上限，不能套用 WAN3 限制 |
+| 知梦 WAN3 | 公网 HTTP(S)；参考视频 MP4/MOV，单段 ≤15 秒、≤64 MiB，视频总时长 ≤15 秒且输入加输出 ≤30 秒；含视频的请求中其他素材也须 ≤64 MiB |
+| 知梦 Seedance 2.0 | 公网 HTTP(S)；数量预检不保证远程文件可读、格式有效 |
+| 知梦 Seedance 2.5 | 有效的 `https://h3.juheai.club/m/<对象ID>` public_url；图片 JPG/PNG/WebP ≤20 MB；视频 MP4/MOV，单段 2–15 秒、≤50 MB；音频 MP3/WAV/M4A/AAC/OGG/FLAC，单段 ≤15 秒、≤30 MB；素材总计 ≤100 MB，不套用总时长 15 秒限制 |
+| 知梦 H3 | 公网 HTTP(S)；视频 MP4/MOV，单段 2–15 秒、≤50 MB，总视频时长 ≤15 秒；不套用 WAN3 的输入加输出 ≤30 秒限制 |
+| 知梦 Veo/Omni | 知梦工作台存储的公开 HTTPS 图片 URL，≤4096 字符，无查询参数、无片段；存储归属由上游校验，不接受任意第三方图片链接 |
+
+知梦 H3 工作台另列图片 ≤15 MB、音频 ≤30 MB 且音频总长 ≤15 秒；知梦 WAN3 工作台建议音频单段 ≤15 秒。这些工作台要求不能直接当作独立 API 全部已验证的硬限制。具体文件的最终接受结果由上游返回，失败时展示原因。
+
+## 5. 扩展参数
+
+仅按下表发送，不支持的扩展必须报错。扩展不能改变公共模型、时长、分辨率、画幅、素材、鉴权、请求头或请求目的地。
+
+| metadata.parameters 字段 | 类型 / 范围 | 开放范围 | 含义 |
+| --- | --- | --- | --- |
+| audio | boolean | 知梦 WAN3 | 是否生成输出声音；不是输入参考音频 |
+| prompt_extend | boolean | 知梦 WAN3 | 是否扩写提示词 |
+| watermark | boolean | 知梦 WAN3 | 是否添加水印 |
+| seed | integer，-1…2147483647 | 知梦 WAN3 | 随机种子；0 是合法值，不保证逐次结果完全一致 |
+| fast_mode | boolean | 知梦 MiniMax-H3，需完成相应适配 | false 标准、true 优先，影响计费；未选择时省略 |
+
+RollDek WAN3、四款 RollDek SD、四款知梦 SD、六款 Veo/Omni 的扩展白名单为空，只能省略或传 `{}`。未开放不表示供应商永久没有此能力，而是公共入口没有明确支持和校验。
+
+## 6. 创建示例与响应
+
+由应用服务端调用，根地址与 Token 从服务端配置取得：
+
+```bash
+export TOKENONE_BASE_URL='https://token.agentone.work'
+export TOKENONE_API_KEY='YOUR_TOKENONE_API_KEY'
+curl --fail-with-body --request POST "$TOKENONE_BASE_URL/v1/videos" \
+  --header "Authorization: Bearer $TOKENONE_API_KEY" \
+  --header 'Content-Type: application/json' \
+  --data '{"model":"wan3.0-video","prompt":"海浪拍打礁石，镜头缓缓推进","duration":6,"resolution":"720P","ratio":"16:9"}'
+```
+
+首尾帧请求使用第 2 节结构，在 media 中同时提供 first_frame 与 last_frame。例如 sd-2.5-ch1 使用 6 秒 / 720P / 16:9，必须提供成对首尾帧，不能只传首帧或同时混入普通参考。
+
+H3 标准通道请求体示例：
 
 ```json
 {
-  "id": "task_EXAMPLE",
-  "object": "video",
-  "model": "wan3.0-video",
-  "status": "completed",
-  "progress": 100,
-  "created_at": 1792324500,
-  "completed_at": 1792324620
+  "model": "MiniMax-H3",
+  "prompt": "海边日落，镜头缓慢推进",
+  "duration": 8,
+  "resolution": "768P",
+  "ratio": "16:9",
+  "metadata": {"parameters": {"fast_mode": false}}
 }
 ```
 
-无论响应是否包含视频地址，都使用下一节的下载接口获取视频，无需从其他字段查找地址。
+Veo 文生视频请求体示例，不发送 duration：
 
-## 7. 视频下载与播放
+```json
+{"model":"veo-3.1-fast","prompt":"清晨城市全景，镜头平稳推进","resolution":"720P","ratio":"16:9"}
+```
 
-任务 `completed` 后下载：
+创建成功返回 HTTP 200 和任务对象，以下 ID、时间和进度为示意值：
+
+```json
+{"id":"task_PUBLIC_ID","object":"video","model":"wan3.0-video","status":"queued","progress":0,"created_at":1793400000}
+```
+
+保存 `id`。回执可能立即是 completed 或 failed，不能假定一定先 queued。创建 HTTP 成功只表示收到任务对象，不代表生成一定成功。
+
+## 7. 查询任务与标准状态
 
 ```bash
-curl --fail-with-body "$TOKENONE_BASE_URL/v1/videos/$TASK_ID/content" \
-  -H "Authorization: Bearer $TOKENONE_API_KEY" \
+export TASK_ID='task_PUBLIC_ID'
+curl --fail-with-body "$TOKENONE_BASE_URL/v1/videos/$TASK_ID" \
+  --header "Authorization: Bearer $TOKENONE_API_KEY"
+```
+
+| status | 含义 | 应用行为 |
+| --- | --- | --- |
+| queued | 已受理，等待处理 | 查询同一任务 |
+| in_progress | 生成或结果处理进行中 | 查询同一任务 |
+| completed | 已确认生成完成 | 下载并保存成片 |
+| failed | 已确认任务失败 | 展示原因，不自动重建 |
+
+建议每 10–20 秒查询一次，限流或临时错误时退避并遵守 Retry-After（如有）。progress 只是辅助信息，不保证单调或实时，达到 100 不能替代 status。未知状态或无效响应应记录异常并保留原任务，不当作完成或重新创建。
+
+标准任务字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| id | string | TokenONE 公共任务 ID |
+| object | string | video |
+| model | string | 公共模型身份 |
+| status | string | 上述四种状态 |
+| progress | integer | 正常为 0–100，不带百分号；异常值不能触发完成判断 |
+| created_at | integer | Unix 秒时间戳 |
+| completed_at | integer，可选 | 成功且有有效时间时存在；缺失时不自行推断失败 |
+| error | object，可选 | 经脱敏的 code/message；缺失时显示通用失败提示 |
+
+完成示例：
+
+```json
+{"id":"task_PUBLIC_ID","object":"video","model":"wan3.0-video","status":"completed","progress":100,"created_at":1793400000,"completed_at":1793400060}
+```
+
+公共响应不要求提供结果 URL，应用始终使用 content 接口。标准插件不得直接暴露原始供应商响应、私有任务 ID、上游 URL、签名或凭证。
+
+**生成状态与内容可用性分别处理**：可信生成完成后，即使结果地址缺失、过期或下载失败，仍是 completed。应用显示下载/保存问题并恢复同一任务，不能把它改成生成失败或据此触发退款。供应商未知状态也不能伪装成正常处理中。
+
+## 8. 鉴权下载与播放
+
+```bash
+curl --fail "$TOKENONE_BASE_URL/v1/videos/$TASK_ID/content" \
+  --header "Authorization: Bearer $TOKENONE_API_KEY" \
   --output result.mp4
 ```
 
-检查响应头：
+下载成功返回媒体字节，不是 JSON 地址。应用先检查 HTTP 状态、Content-Type 和非空内容，再保存成片；curl 失败产生的文件不得当作视频使用。
 
-```bash
-curl --fail-with-body --head "$TOKENONE_BASE_URL/v1/videos/$TASK_ID/content" \
-  -H "Authorization: Bearer $TOKENONE_API_KEY"
-```
+可以使用 HEAD 查询响应头，也可按需发送 `Range: bytes=0-1023`。返回 206 时检查 Content-Range；返回 200 可能是完整文件，不能当作请求片段。
 
-只下载前 1024 字节的请求示例（是否支持以响应为准）：
+TokenONE 代理两种上游下载：签名/公开存储地址不携带渠道密钥；受保护的供应商 API 下载只向可信地址发送凭证。不得向任意返回 URL 或跨源重定向发送密钥，合法的结果 URL 签名参数应保留。应用不需要知道采用哪一种。
 
-```bash
-curl --fail-with-body "$TOKENONE_BASE_URL/v1/videos/$TASK_ID/content" \
-  -H "Authorization: Bearer $TOKENONE_API_KEY" \
-  -H 'Range: bytes=0-1023' \
-  --output video-part.bin
-```
+示例不使用 `curl -L`。应用服务端应拒绝未经校验的重定向，避免将 TokenONE Token 发送到其他域名。浏览器 `<video src>` 无法自动附加 Bearer Header，应用应通过自己的后端下载、保存，再由自己的文件服务提供播放。
 
-`Range` 用于请求文件的一部分。返回 HTTP `206` 时，查看 `Content-Range` 确认实际范围；如果返回 HTTP `200`，服务可能返回了完整文件，不能当作指定片段处理。
+完成后尽快保存到自有存储。任务记录存在不保证成片永久可下载；不将供应商工作台保存时长或下载次数当作统一 API 保证。
 
-下载接口成功时返回媒体字节，不是 JSON 地址。客户端应同时检查 HTTP 状态、Content-Type 和文件是否为空；`curl` 命令失败时不要把输出文件当作成片。不要对任意响应中的 URL 自动附加 TokenONE 令牌。
+## 9. 错误、重试与计费
 
-浏览器 `<video src>` 无法自动附加上述 Bearer Header。建议由业务后端下载并存储成片，再以自己的受控文件服务向浏览器提供播放、拖动和下载能力。不要为了播放把长期 API Key 暴露给浏览器。
-
-生成完成后请尽快下载并保存到自己的存储服务。视频下载地址可能失效，能查到任务记录不代表视频仍可下载。
-
-## 8. 计费与失败处理
-
-- 价格以 TokenONE 中该账号的实际配置和消费明细为准，不要照搬供应商价格表。
-- 费用与分辨率、计费秒数有关。使用参考视频时，计费秒数可能还包含参考视频时长，不能只按输出 `duration` 估算。最终扣费请查看消费明细。
-- 创建任务时可能先预扣费用，之后根据任务结果结算或退款。
-- 已生成成功但业务侧下载失败，不代表生成费自动退款。应重试查询或下载同一个任务，而不是重新生成。
-
-### 常见问题
-
-| 现象 | 排查与处理 |
+| 场景 | 处理 |
 | --- | --- |
-| 请求被拒绝 | 根据错误信息检查模型权限、余额、JSON 结构、时长、分辨率、宽高比与素材组合 |
-| 基础请求成功，添加某参数后失败 | 先检查参数类型、取值和素材组合；均正确时，联系平台确认账号是否有支持该参数的渠道，不自动删参数重试 |
-| 只有尾帧时报错 | 添加 `first_frame` 首帧图片；如果图片只作一般参考而不要求作为尾帧，改用 `reference_image` |
-| 切换模型后无法提交 | 确认账号有权调用目标模型，并按目标模型的说明检查参数 |
-| 素材浏览器能打开，任务却失败 | 检查公网可访问性、签名有效期、文件类型、访问限制及远端抓取条件 |
-| 创建请求超时，没有拿到 ID | 任务可能已经创建。先检查平台任务记录或联系支持；直接重发可能创建第二个任务并再次计费 |
-| 查询临时超时或限流 | 使用原 ID 稍后再查，多次失败时延长查询间隔，不重新创建任务 |
-| 状态为 completed，下载失败 | 重试同一任务的 `/content`；仍失败时，保留任务 ID 和错误信息联系平台排查 |
-| 查不到任务 | 确认使用创建响应的 `id`、正确的 TokenONE 实例及有权访问该任务的账号 |
+| 类型错误、别名冲突、不支持参数或组合 | 按错误提示修改输入；不能自动删参数、改素材或降级 |
+| 分组没有兼容渠道或选中未适配插件 | 正常展示错误；应用不选择供应商私有协议 |
+| 创建超时、连接断开，未拿到 ID | 保留提交结果未知状态，查询平台任务记录或联系支持；不能盲目重发 POST |
+| 查询或下载的 429、网络错误、临时 5xx | 退避重试同一任务的 GET，不能回到创建 |
+| 401/403 | 检查 TokenONE 用户 Token 与权限，不尝试他人 Token 或供应商密钥 |
+| 下载返回 404 | 任务不存在或不可访问；不通过私有 ID 绕过归属检查 |
+| 下载前任务未完成 | 当前普通 content 路径通常返回 400 invalid_request_error；先查询原任务，不将所有 400 当临时错误 |
+| 内容尚未就绪 | 特定上游内容提取分支可返回 409 artifact_not_ready；可恢复同一任务下载 |
+| 内容缺失、过期或不可恢复 | 410 artifact_gone；停止无限重试，不自动重新生成 |
+| failed | 展示原因；用户明确另行生成才创建新任务 |
 
-错误响应的具体结构可能因校验阶段而不同。业务代码应先检查 HTTP 状态，再读取响应中可用的错误字段；查询返回 HTTP 200 时仍须检查任务 `status`。
+错误结构沿用现有接口，不保证每个响应都有相同的 code/type。例如查询不存在任务可能返回 400 task_not_exist，下载不存在或他人任务返回 404。HTTP 200 的任务对象也必须检查 status。
 
-## 9. 开发者验收清单
+应用与 TokenONE 的重试独立配置，互不读取或覆盖。此契约不提供幂等键或恰好一次提交保证；页面刷新、查询失败、下载失败均不得触发自动重建。
 
-- 创建一次只生成一个任务，页面刷新、轮询、下载失败不触发重复创建。
-- WAN3 标准和 Prime 分别测试，分辨率通过 `resolution` 传递。
-- 首帧与尾帧角色正确；普通参考图模式使用 `reference_image`。
-- 下载后检查实际成片的时长、尺寸和声音是否符合请求。
-- 对业务会使用的宽高比、参考素材、声音和水印设置分别测试。
-- 失败停止轮询并显示原因，完成后保存结果；前端与服务端均不泄露 API Key。
+价格以 TokenONE 账号配置和消费明细为准。不同模型可按秒、Token 或条计费，不能只根据 duration 推导价格；参考视频、H3 额外参考图片、分辨率、时长档和 fast_mode 都可能影响费用。创建按有效参数预扣，完成按可靠用量结算；缺失或非法用量遵循现有安全策略，不自行计零。生成失败沿用退款流程，生成成功但下载失败不等于生成费应退款。
 
-上线前，请使用实际部署账号完成上述测试。
+## 10. 自定义插件开发要求（强制）
+
+开发、修改或审查 TokenONE 自定义视频插件时，必须先完整阅读本文，再阅读仓库 `docs/plugin-api/v1.md` 中的 hook/runtime 约定；涉及计费必须完整阅读 `.agents/rules/billing.md`。本文是公共调用契约的规范来源，实施计划和迁移指南不另行定义一套公共字段。
+
+1. 使用公共模型身份。不同提供方确为同一模型时复用身份；无法确认等价的独立型号不得强行合并。解码返回 ctx.model，型号规则使用 ctx.upstreamModel || ctx.model，私有上游名称不改变公共任务身份。
+2. 在插件内校验并构造有效请求，拒绝未知字段、不支持能力和冲突。decodeRequest 可被重复调用，须稳定且不进行网络调用；原生入口保留原格式。
+3. 上游已支持 v1/videos 时直接做必要的字段转换，不强制经过火山格式。插件独立上传，不跨插件导入源码；不新增宿主公共参数校验层、能力注册中心或运行时框架。
+4. 基本默认值仅补缺省字段，可选扩展未提供则不发上游。保留显式 0/false；别名、扩展、multipart、素材字段均不能绕过计费校验。
+5. 复用宿主模型权限、渠道候选和任务归属。解码拒绝仅影响本次请求；不保证普通渠道或未适配插件会自动遵守本规范。
+6. 查询 renderer 明确构造安全输出字段，不能返回整个 task.data。宿主生成标准字段；插件仅输出批准的安全扩展，错误内容也须脱敏。原始结果供服务端查询、下载和结算使用。
+7. 驱动将已知状态映射到宿主状态，公共接口呈现第 7 节四种状态。可信成功缺少 URL 不反转为失败；未知供应商状态沿用宿主查询异常策略。下载恢复不能发起创建。
+8. 复用现有 usageSchema、usageProfiles 和 usage hooks。预估、提交、结算依据同一有效请求；保留用量边界、缺失/非法用量安全策略，不由金额反推数量。知梦 H3 计费响应、账单读取和预扣结算沿用已接入的旧插件，不重复建立或要求重新证明整套链路。
+9. 供应商密钥只在服务端使用。签名存储下载不带渠道凭证；受保护 API 下载验证目的地与重定向边界。保留现有鉴权、SSRF 及任务访问控制，不通过公共扩展改变目的地。
+10. 新增型号必须同步登记准确 ID、默认值、范围、素材角色与顺序、数量/组合/URL 限制、扩展白名单、计费影响及验证状态。未知能力明确标注，不把模拟通过写成真实上游验证完成。
+
+以上为插件作者规范，不改变 API v1 的 manifest、hook、schema 或 TypeScript 类型，不要求重写公共 Doubao、Alibaba 等历史插件。
+
+### 10.1 字段映射参考
+
+这些映射仅属于对应插件，上游字段不成为应用参数：
+
+| 插件 / 型号 | model 与基本字段 | 素材 | 扩展 |
+| --- | --- | --- | --- |
+| RollDek WAN3 | model 同名不加分辨率后缀；duration→seconds 字符串；resolution→size；ratio→aspect_ratio | metadata.input.media→input.media | 空白名单 |
+| RollDek 四款 SD | model 同名；duration 整数；resolution→720p；ratio→aspect_ratio | 按型号转 image_refs/video_refs/audio_refs 或 first_image/last_image | 空白名单；按条计费，不套用火山 Token 计费 |
+| 知梦 WAN3 | model/prompt/duration/resolution 同名；ratio→aspect_ratio | metadata.input.media | 仅四项已登记扩展；兼容 generate_audio→audio、reference_voice→reference_audio |
+| 知梦 sd-2-c4/c5 | prompt→input.prompt；duration/resolution/ratio→parameters，分辨率 720p | input.media；reference_audio→reference_voice | 空白名单 |
+| 知梦两款 Seedance 2.5 | model/prompt/duration/ratio 顶层；resolution→720p | reference_images/reference_videos/reference_audios；官转不发送视频字段，空数组也不发送 | 空白名单 |
+| 知梦 MiniMax-H3 | model→minimax-h3；ratio→aspect_ratio；480P→480p、768P→768P、1080P→1080p、2K→2K | image_urls/video_urls/audio_urls；由角色推导 generation_mode=frames 或 references | fast_mode→顶层 fast_mode |
+| 知梦 Veo/Omni | model/prompt 同名；720P+横/竖→1280x720/720x1280；1080P+横/竖→1920x1080/1080x1920，写入 size | reference_images；无素材 text，首帧 first_frame，首尾帧 first_last，参考图 reference，显式写 generation_mode | 空白名单；拒绝 duration |
+
+首尾帧按角色排序后输出；参考数组按每类相对顺序输出，不改写用户提示词。Omni 单张普通参考必须明确传 reference，不能依赖上游按图片数猜测为 first_frame。
+
+### 10.2 必须覆盖的回归
+
+- 相同公共请求在支持该能力的插件之间语义一致；公共 model 与上游映射正确。
+- 各模型合法边界、默认值、显式 0/false、非法 null、标准数字类型、别名等价/冲突和未知字段。
+- 首尾帧倒序输入、普通参考顺序、数量上限、角色冲突、专用 URL 限制与缺省 input。
+- 预估对应实际发送参数；影响计费的扩展、别名及素材无法绕过校验。
+- 实际用量、缺失/非法用量、失败退款、生成成功但下载失败；H3 新参数覆盖长短时长、2K 边界、fast_mode 和额外图片计费。
+- 公共创建与查询字段、立即完成/失败、未知状态、缺 URL 仍保持可信成功状态。
+- 有效用户鉴权、任务归属、模型权限、渠道限制、签名下载、Bearer 下载及跨源凭证隔离。
+- 下载失败后没有新增创建请求；旧原生入口及已有有效能力不回退。
+
+优先扩展现有适合的测试，不为同一行为在各层重复造测试。分别记录本地模拟命令/结果、授权真实上游验证和未验证事项。真实生成与线上部署须另行授权，发布本文不代表授权执行。
 
 ## 维护依据
 
-本文根据 TokenONE / New API 的视频接口及已实现的模型适配编写，章节组织参考了[知梦 WAN3 对接手册](https://zhimengapi.pages.dev/video/wan3)。调用 TokenONE 时请使用本文的地址、模型 ID 和请求格式，不要直接套用供应商接口示例。
+本文基于 TokenONE / New API 的视频接口、已确认的统一契约及提供方文档整理。后续插件开发以本文定义的公共调用方式为准；实际部署进度与验证记录单独维护，不用文档发布替代插件验收。
+
+### H3 可视化时长档位
+
+知梦插件 1.5.3 在 H3 用量中新增 `duration_tier` 枚举 `4-15` / `16-30`，由有效输出时长生成；完成时随可靠输出秒数重新计算，参考视频秒数不参与档位判断。现有价格矩阵可按分辨率和该枚举维护生成秒价、参考视频秒价、额外图片单价，无需修改宿主可视化编辑器。2K 的长时长组合仍由请求校验拒绝，矩阵中的该组合不代表支持生成。
+
+更新插件不会自动重写已保存价格；旧 `seconds <= 15` 表达式需等价改为枚举条件才会被矩阵识别。旧在途任务继续使用其冻结的计费表达式。

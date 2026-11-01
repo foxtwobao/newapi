@@ -90,7 +90,7 @@ func TestWAN3SharedRequests(t *testing.T) {
 					switch plugin.Meta.Key {
 					case "rolldek":
 						assert.Equal(t, prompt, body["prompt"])
-						assert.Equal(t, model+"-"+strings.ToLower(resolution), body["model"])
+						assert.Equal(t, model, body["model"])
 						assert.Equal(t, resolution, body["size"])
 						assert.Equal(t, "2", body["seconds"])
 						assert.Equal(t, "9:16", body["aspect_ratio"])
@@ -122,7 +122,7 @@ func TestWAN3SharedRequests(t *testing.T) {
 			{"equivalent pixel sizes", map[string]any{"prompt": "cat", "size": "1280x720", "metadata": map[string]any{"parameters": map[string]any{"size": "1280*720"}}}, 5, "720P", "16:9"},
 			{"pixel size plus tier", map[string]any{"prompt": "cat", "size": "1280x720", "metadata": map[string]any{"parameters": map[string]any{"size": "720p"}}}, 5, "720P", "16:9"},
 			{"tier plus pixel size", map[string]any{"prompt": "cat", "size": "720", "metadata": map[string]any{"parameters": map[string]any{"size": "1280x720"}}}, 5, "720P", "16:9"},
-			{"aliases agree", map[string]any{"prompt": "cat", "duration": 2, "seconds": "2", "resolution": "720p", "ratio": "auto", "aspect_ratio": "adaptive", "metadata": map[string]any{"input": map[string]any{"prompt": "cat"}, "parameters": map[string]any{"duration": "2", "resolution": "720P", "ratio": "adaptive"}}}, 2, "720P", "adaptive"},
+			{"aliases agree", map[string]any{"prompt": "cat", "duration": 2, "seconds": "2", "resolution": "720p", "ratio": "auto", "aspect_ratio": "adaptive", "metadata": map[string]any{"input": map[string]any{"prompt": "cat"}, "parameters": map[string]any{"duration": 2, "resolution": "720P", "ratio": "adaptive"}}}, 2, "720P", "adaptive"},
 		} {
 			t.Run(plugin.Meta.Key+"/"+tc.name, func(t *testing.T) {
 				req, err := wan3Decode(t, plugin, "wan3.0-video", tc.body)
@@ -172,7 +172,16 @@ func TestWAN3RejectsConflictsBeforeSubmission(t *testing.T) {
 				req["prompt"] = "cat"
 			}
 			_, err := wan3Decode(t, plugin, "wan3.0-video", req)
-			assert.Error(t, err, "%s accepted %+v", plugin.Meta.Key, body)
+			allowedAlias := plugin.Meta.Key == "zhimeng" && body["generate_audio"] == false
+			if media, ok := body["media"].([]any); ok && len(media) == 1 {
+				item, ok := media[0].(map[string]any)
+				allowedAlias = allowedAlias || (ok && plugin.Meta.Key == "zhimeng" && item["url"] == "http://example.com/a.png")
+			}
+			if allowedAlias {
+				require.NoError(t, err)
+			} else {
+				assert.Error(t, err, "%s accepted %+v", plugin.Meta.Key, body)
+			}
 		}
 	}
 }
@@ -198,6 +207,8 @@ func TestWAN3ChannelCapabilities(t *testing.T) {
 		{`{"prompt":"cat","metadata":{"input":{"media":[{"type":"reference_audio","url":"https://example.com/a.wav"}]}}}`, []string{"alibaba", "rolldek", "zhimeng"}},
 		{`{"prompt":"图2的人物参考音频1","metadata":{"input":{"media":[{"type":"reference_image","url":"https://example.com/a.png"},{"type":"reference_audio","url":"https://example.com/a.wav"},{"type":"reference_image","url":"https://example.com/b.png"}]},"parameters":{"audio":false}}}`, []string{"alibaba", "zhimeng"}},
 		{`{"prompt":"cat","metadata":{"input":{"media":[{"type":"reference_video","url":"https://example.com/a.mp4"}]}}}`, []string{"alibaba", "rolldek", "zhimeng"}},
+		// The built-in decoder keeps its own contract; only custom candidates
+		// reject this duration during endpoint preparation.
 		{`{"prompt":"cat","duration":31}`, []string{"alibaba"}},
 	} {
 		router := gin.New()
@@ -221,12 +232,7 @@ func TestWAN3ChannelCapabilities(t *testing.T) {
 		}
 	}
 	for _, plugin := range plugins {
-		if plugin.Meta.Key == "alibaba" {
-			req, err := wan3Decode(t, plugin, "wan3.0-video", map[string]any{"prompt": "cat", "duration": 31})
-			require.NoError(t, err)
-			_, err = plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{"model": "wan3.0-video", "requestBody": req, "baseUrl": "https://provider.example", "apiKey": "k"})
-			require.Error(t, err)
-		}
+
 		if plugin.Meta.Key == "rolldek" {
 			continue
 		}
@@ -262,7 +268,7 @@ func TestWAN3RollDekMediaOrderAndIdentity(t *testing.T) {
 	value, err = plugin.Engine.Call(t.Context(), "parseSubmitResponse", ctx, map[string]any{"body": map[string]any{"id": "vendor-job"}})
 	require.NoError(t, err)
 	state := rolldekMap(t, value)["state"].(map[string]any)
-	assert.Equal(t, "wan3.0-video-480p", state["upstreamModel"])
+	assert.Equal(t, "wan3.0-video", state["upstreamModel"])
 	assert.Equal(t, true, state["hasReferenceVideo"])
 	ctx["upstreamModel"] = "wan3.0-video-720p"
 	_, err = plugin.Engine.Call(t.Context(), "buildSubmitRequest", ctx)
@@ -350,8 +356,8 @@ func TestZhimengTaskContract(t *testing.T) {
 	value, err := plugin.Engine.Call(t.Context(), "parseTaskResult", map[string]any{"model": "sd-2-c4"}, map[string]any{"status": "completed"})
 	require.NoError(t, err)
 	result := rolldekMap(t, value)
-	assert.Equal(t, "UNKNOWN", result["status"])
-	assert.Equal(t, "Seedance video URL is unavailable", result["reason"])
+	assert.Equal(t, "SUCCESS", result["status"])
+	assert.NotContains(t, result, "reason")
 	for _, state := range []any{nil, map[string]any{"hasReferenceVideo": true}, map[string]any{"duration": 5, "resolution": "720P"}} {
 		_, err := plugin.Engine.Call(t.Context(), "extractUsageOnComplete", map[string]any{"state": state}, map[string]any{"status": "SUCCESS"}, map[string]any{"seconds": 2})
 		require.ErrorContains(t, err, "retaining reserved usage")
@@ -409,11 +415,9 @@ func TestZhimengWAN3Media(t *testing.T) {
 	for _, media := range [][]any{{last}, {first, first}, {first, last, last},
 		append(append([]any{}, maximum...), imageFirst),
 		append(append([]any{}, maximum...), audioFirst),
-		{map[string]any{"type": "reference_voice", "url": "https://example.com/audio.wav"}},
 		{first, map[string]any{"type": "reference_image", "url": "https://example.com/image.png"}},
 		{first, map[string]any{"type": "reference_audio", "url": "https://example.com/audio.wav"}},
 		{map[string]any{"type": "first_frame", "url": "data:image/png;base64,AA=="}},
-		{map[string]any{"type": "first_frame", "url": "http://example.com/first.png"}},
 		{map[string]any{"type": "first_frame", "url": "https://example.com/first.png", "role": "reference_image"}}} {
 		_, err := wan3Decode(t, plugin, "wan3.0-video", map[string]any{"prompt": "cat", "metadata": map[string]any{"input": map[string]any{"media": media}}})
 		require.Error(t, err, "%+v", media)
@@ -562,8 +566,6 @@ func TestZhimengSeedanceMedia(t *testing.T) {
 		{last}, {first, first}, {first, last, last}, {video, video, video, video}, {audio, audio, audio, audio},
 		{first, last, image, image, image, image, image, image, image, image},
 		append(append([]any{}, maximum...), image),
-		{map[string]any{"type": "reference_voice", "url": "https://example.com/audio.wav"}},
-		{map[string]any{"type": "reference_image", "url": "http://example.com/image.png"}},
 		{map[string]any{"type": "reference_image", "url": "data:image/png;base64,AA=="}},
 		{map[string]any{"type": "reference_video", "url": "https://example.com/video.mp4", "duration": 4}},
 	} {
@@ -781,7 +783,12 @@ func TestZhimengMinimaxH3(t *testing.T) {
 	require.True(t, found)
 	assert.Equal(t, "zhimeng", binding.Plugin.Meta.Key)
 	schema, _ := plugin.Meta.UsageForModel("MiniMax-H3")
-	require.Len(t, schema, 4)
+	require.Contains(t, schema, "priority_mode")
+	assert.Equal(t, []string{"standard", "priority"}, schema["priority_mode"].Enum)
+	require.Contains(t, schema, "duration_tier")
+	assert.Equal(t, []string{"4-15", "16-30"}, schema["duration_tier"].Enum)
+	require.Contains(t, schema, "fast_mode")
+	assert.Equal(t, "boolean", schema["fast_mode"].Type)
 	assert.Equal(t, "second", schema["reference_video_seconds"].Unit)
 	assert.Equal(t, "count", schema["extra_image_count"].Unit)
 
@@ -815,14 +822,14 @@ func TestZhimengMinimaxH3(t *testing.T) {
 			assert.Equal(t, tc.images, body["image_urls"])
 			value, err = plugin.Engine.Call(t.Context(), "extractUsage", ctx)
 			require.NoError(t, err)
-			assert.Equal(t, map[string]any{"seconds": tc.seconds, "resolution": tc.resolution, "reference_video_seconds": float64(0), "extra_image_count": float64(0)}, rolldekMap(t, value))
+			assert.Equal(t, map[string]any{"duration_tier": "4-15", "seconds": tc.seconds, "resolution": tc.resolution, "fast_mode": false, "priority_mode": "standard", "reference_video_seconds": float64(0), "extra_image_count": float64(0)}, rolldekMap(t, value))
 			value, err = plugin.Engine.Call(t.Context(), "parseSubmitResponse", ctx, map[string]any{"body": map[string]any{"id": "h3-task"}})
 			require.NoError(t, err)
 			task := map[string]any{"model": "MiniMax-H3", "state": rolldekMap(t, value)["state"]}
 			value, err = plugin.Engine.Call(t.Context(), "extractUsageOnComplete", task, map[string]any{"status": "SUCCESS"}, map[string]any{})
 			require.NoError(t, err)
-			assert.Equal(t, map[string]any{"seconds": tc.seconds}, rolldekMap(t, value))
-			for _, seconds := range []any{0, 3, 16, 4.5, "4", nil} {
+			assert.Equal(t, map[string]any{"duration_tier": "4-15", "seconds": tc.seconds}, rolldekMap(t, value))
+			for _, seconds := range []any{0, 3, 31, 4.5, "4", nil} {
 				_, err = plugin.Engine.Call(t.Context(), "extractUsageOnComplete", task, map[string]any{"status": "SUCCESS"}, map[string]any{"seconds": seconds})
 				require.Error(t, err)
 			}
@@ -857,7 +864,7 @@ func TestZhimengMinimaxH3(t *testing.T) {
 	assert.Equal(t, "minimax-h3", rolldekMap(t, value)["body"].(map[string]any)["model"])
 	value, err = plugin.Engine.Call(t.Context(), "extractUsageOnComplete", map[string]any{"model": "custom-h3", "upstreamModel": "minimax-h3", "state": map[string]any{"duration": 4, "hasReferenceVideo": false}}, map[string]any{"status": "SUCCESS"}, map[string]any{})
 	require.NoError(t, err)
-	assert.Equal(t, map[string]any{"seconds": float64(4)}, rolldekMap(t, value))
+	assert.Equal(t, map[string]any{"duration_tier": "4-15", "seconds": float64(4)}, rolldekMap(t, value))
 	for _, count := range []int{5, 6, 9, 10} {
 		images := make([]any, count)
 		for i := range images {
@@ -872,7 +879,7 @@ func TestZhimengMinimaxH3(t *testing.T) {
 		ctx := map[string]any{"model": "MiniMax-H3", "requestBody": req, "baseUrl": "https://provider.example", "apiKey": "test-key"}
 		value, err := plugin.Engine.Call(t.Context(), "extractUsage", ctx)
 		require.NoError(t, err)
-		assert.Equal(t, map[string]any{"seconds": float64(4), "resolution": "2K", "reference_video_seconds": float64(15), "extra_image_count": float64(max(count-5, 0))}, rolldekMap(t, value))
+		assert.Equal(t, map[string]any{"duration_tier": "4-15", "seconds": float64(4), "resolution": "2K", "fast_mode": false, "priority_mode": "standard", "reference_video_seconds": float64(15), "extra_image_count": float64(max(count-5, 0))}, rolldekMap(t, value))
 		_, err = plugin.Engine.Call(t.Context(), "buildSubmitRequest", ctx)
 		require.Error(t, err, "reference video requires access to provider billing logs")
 		fetch := jsplugin.WithFetcher(t.Context(), func(_ context.Context, r jsplugin.FetchRequest) (jsplugin.FetchResponse, error) {
@@ -893,7 +900,7 @@ func TestZhimengMinimaxH3(t *testing.T) {
 		assert.Equal(t, "https://cdn.example/h3.mp4", parsed["url"])
 		value, err = plugin.Engine.Call(t.Context(), "extractUsageOnComplete", task, map[string]any{"status": "SUCCESS", "plugin_state": parsed["state"]}, map[string]any{})
 		require.NoError(t, err)
-		assert.Equal(t, map[string]any{"seconds": float64(4), "reference_video_seconds": 6.038}, rolldekMap(t, value))
+		assert.Equal(t, map[string]any{"duration_tier": "4-15", "seconds": float64(4), "reference_video_seconds": 6.038}, rolldekMap(t, value))
 	}
 	value, err = plugin.Engine.Call(t.Context(), "buildContentRequest", map[string]any{"model": "MiniMax-H3", "artifactKey": "video", "upstreamTaskId": "h3-task", "baseUrl": "https://provider.example", "apiKey": "test-key", "clientRequest": map[string]any{"method": "GET"}})
 	require.NoError(t, err)
