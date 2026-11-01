@@ -24,10 +24,10 @@ func TestRollDekStandalonePlugin(t *testing.T) {
 	assert.Equal(t, "rolldek", plugin.Meta.Key)
 	assert.Empty(t, plugin.Meta.ChannelTypes)
 	assert.Equal(t, "https://rolldek.com", plugin.Meta.BaseURL)
-	assert.ElementsMatch(t, []string{"wan3.0-video", "wan3.0-video-prime"}, plugin.Meta.Models)
+	assert.ElementsMatch(t, []string{"wan3.0-video", "wan3.0-video-prime", "sd-2.0-ch1", "sd-2.5-ch1", "sd-2.5-ch2", "sd-2.5-ch3"}, plugin.Meta.Models)
 	_, ok := registry.Get("alibaba")
 	assert.True(t, ok)
-	for _, model := range plugin.Meta.Models {
+	for _, model := range []string{"wan3.0-video", "wan3.0-video-prime"} {
 		schema, _ := plugin.Meta.UsageForModel(model)
 		require.Contains(t, schema, "seconds")
 		assert.Equal(t, "second", schema["seconds"].Unit)
@@ -73,7 +73,7 @@ func TestRollDekStandalonePlugin(t *testing.T) {
 	assert.NotContains(t, request, "model")
 	assert.Equal(t, "https://rolldek.com/v1/videos", request["url"])
 	aliasBody := request["body"].(map[string]any)
-	assert.Equal(t, "wan3.0-video-720p", aliasBody["model"])
+	assert.Equal(t, "wan3.0-video", aliasBody["model"])
 	assert.Equal(t, "720P", aliasBody["size"])
 	assert.Equal(t, "5", aliasBody["seconds"])
 	_, err = decode("wan3.0-video", map[string]any{"prompt": "cat", "duration": 0})
