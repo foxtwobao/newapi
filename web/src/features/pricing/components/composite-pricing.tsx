@@ -16,9 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useTranslation } from 'react-i18next'
+import { Trans, useTranslation } from 'react-i18next'
 
 import { StaticDataTable } from '@/components/data-table'
+import { StatusBadge } from '@/components/status-badge'
 import {
   Accordion,
   AccordionContent,
@@ -39,6 +40,7 @@ export type CompositePricePath = {
 
 export type CompositePriceGroup = {
   name: string
+  ratio?: number | null
   definition: {
     enabled: boolean
     cross_group_retry: boolean
@@ -52,7 +54,10 @@ export type CompositePriceGroup = {
   }[]
 }
 
-export function CompositePricing(props: { groups: CompositePriceGroup[] }) {
+export function CompositePricing(props: {
+  groups: CompositePriceGroup[]
+  mode?: 'summary' | 'details'
+}) {
   const { t, i18n } = useTranslation()
   if (props.groups.length === 0) return null
 
@@ -62,6 +67,74 @@ export function CompositePricing(props: { groups: CompositePriceGroup[] }) {
     toIntlLocale(i18n.resolvedLanguage || i18n.language),
     { maximumSignificantDigits: 15 }
   )
+
+  if (props.mode !== 'details') {
+    return (
+      <section
+        className='bg-card/60 mb-6 min-w-0 rounded-xl border p-4'
+        aria-label={t('ONE app composite multipliers')}
+      >
+        <h2 className='text-sm font-semibold'>
+          {t('ONE app composite multipliers')}
+        </h2>
+        <p className='text-muted-foreground mt-1 text-sm leading-relaxed'>
+          <Trans
+            t={t}
+            i18nKey='When using models through <apps>ONE apps</apps>, final billing multiplier = app composite multiplier × the multiplier of the group used in the model list below.'
+            components={{
+              apps: (
+                <a
+                  href='https://home.agentone.work'
+                  target='_blank'
+                  rel='noopener noreferrer'
+                  className='text-primary underline underline-offset-4'
+                />
+              ),
+            }}
+          />
+        </p>
+        <p className='text-muted-foreground mt-1 text-sm leading-relaxed'>
+          {t(
+            'Direct TokenONE API calls are billed using only the model group multiplier, without the app composite multiplier.'
+          )}
+        </p>
+        <dl className='mt-3 flex flex-wrap gap-2'>
+          {props.groups.map((group) => {
+            let multiplier = (
+              <span className='text-muted-foreground'>
+                {t('Not configured')}
+              </span>
+            )
+            if (group.error || !group.definition.enabled) {
+              multiplier = (
+                <span role='status' className='text-muted-foreground'>
+                  {t('This composite group is unavailable')}
+                </span>
+              )
+            } else if (group.ratio != null) {
+              multiplier = (
+                <StatusBadge
+                  label={`×${number.format(group.ratio)}`}
+                  copyable={false}
+                  variant='info'
+                  className='tabular-nums'
+                />
+              )
+            }
+            return (
+              <div
+                key={group.name}
+                className='bg-background/70 flex max-w-full min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-lg border px-3 py-2 text-sm'
+              >
+                <dt className='min-w-0 break-words'>{group.name}</dt>
+                <dd className='max-w-full'>{multiplier}</dd>
+              </div>
+            )
+          })}
+        </dl>
+      </section>
+    )
+  }
 
   return (
     <section className='mb-6 min-w-0' aria-label={t('Composite group pricing')}>
