@@ -971,6 +971,8 @@
     "Bulk actions for {{count}} selected records": "Actions groupées pour {{count}} fiches",
     "by": "par",
     "By category": "Par catégorie",
+    "By clicking sign in, you agree to our": "En cliquant sur se connecter, vous acceptez nos",
+    "By creating an account, you agree to our": "En créant un compte, vous acceptez nos",
     "By model author": "Par auteur du modèle",
     "By quota": "Par quota",
     "By requests": "Par requêtes",
@@ -1962,6 +1964,7 @@
     "Dify": "Dify",
     "Dify channels only support chatflow and agent, and agent does not support images": "Les canaux Dify ne prennent en charge que les chatflow et les agents, et les agents ne prennent pas en charge les images",
     "Digest:": "Digest :",
+    "Direct TokenONE API calls are billed using only the model group multiplier, without the app composite multiplier.": "Les appels directs à l’API TokenONE sont facturés uniquement selon le multiplicateur du groupe de modèles, sans le multiplicateur composite de l’application.",
     "Direction": "Direction",
     "Directory File Count": "Nombre de fichiers du répertoire",
     "Directory Total Size": "Taille totale du répertoire",
@@ -4334,6 +4337,7 @@
     "Ollama": "Ollama",
     "Ollama Models": "Modèles Ollama",
     "One API": "One API",
+    "ONE app composite multipliers": "Multiplicateurs composites des applications ONE",
     "One domain per line": "Un domaine par ligne",
     "One domain per line (only used when domain restriction is enabled)": "Un domaine par ligne (utilisé uniquement lorsque la restriction de domaine est activée)",
     "One IP or CIDR range per line": "Une IP ou plage CIDR par ligne",
@@ -7352,6 +7356,7 @@
     "When performance monitoring is enabled and system resource usage exceeds the set threshold, new Relay requests will be rejected.": "Lorsque la surveillance des performances est activée et que les ressources dépassent le seuil, les nouvelles requêtes Relay seront rejetées.",
     "When running in containers or ephemeral environments, ensure the SQLite file is mapped to persistent storage to avoid data loss on restart.": "Lors de l'exécution dans des conteneurs ou des environnements éphémères, assurez-vous que le fichier SQLite est mappé à un stockage persistant pour éviter la perte de données au redémarrage.",
     "When the primary domain changes, the previous domain is automatically kept in the compatible domains list.": "Lorsque le domaine principal change, l’ancien domaine est automatiquement conservé dans la liste des domaines compatibles.",
+    "When using models through <apps>ONE apps</apps>, final billing multiplier = app composite multiplier × the multiplier of the group used in the model list below.": "Pour les modèles utilisés via les <apps>applications ONE</apps>, le multiplicateur de facturation final = multiplicateur composite de l’application × multiplicateur du groupe utilisé dans la liste de modèles ci-dessous.",
     "Whitelist": "Liste blanche",
     "Whitelist (Only allow listed domains)": "Liste blanche (Autoriser uniquement les domaines listés)",
     "Whitelist (Only allow listed IPs)": "Liste blanche (Autoriser uniquement les adresses IP listées)",
@@ -7431,8 +7436,6 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "By clicking sign in, you agree to our": "En cliquant sur se connecter, vous acceptez nos",
-    "By creating an account, you agree to our": "En créant un compte, vous acceptez nos"
+    "Zoom": "Zoom"
   }
 }

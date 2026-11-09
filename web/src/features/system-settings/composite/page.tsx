@@ -247,7 +247,9 @@ export default function CompositePage() {
           },
         ]}
       />
-      {previewGroup && <CompositePricing groups={[previewGroup]} />}
+      {previewGroup && (
+        <CompositePricing groups={[previewGroup]} mode='details' />
+      )}
       {editor && (
         <CompositeEditor
           group={editor.group}

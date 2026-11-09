@@ -971,6 +971,8 @@
     "Bulk actions for {{count}} selected records": "選択した {{count}} 件への一括操作",
     "by": "によって",
     "By category": "カテゴリ別",
+    "By clicking sign in, you agree to our": "サインインをクリックすると、以下に同意したことになります：",
+    "By creating an account, you agree to our": "アカウントを作成すると、以下に同意したことになります：",
     "By model author": "モデル提供者別",
     "By quota": "クォータ別",
     "By requests": "リクエスト数別",
@@ -1962,6 +1964,7 @@
     "Dify": "Dify",
     "Dify channels only support chatflow and agent, and agent does not support images": "Dify チャネルは chatflow と agent のみサポートしており、agent は画像をサポートしていません",
     "Digest:": "ダイジェスト：",
+    "Direct TokenONE API calls are billed using only the model group multiplier, without the app composite multiplier.": "TokenONE API を直接呼び出す場合は、モデルのグループ倍率のみで課金され、上記のアプリの複合倍率は適用されません。",
     "Direction": "方向",
     "Directory File Count": "ディレクトリファイル数",
     "Directory Total Size": "ディレクトリ合計サイズ",
@@ -4334,6 +4337,7 @@
     "Ollama": "Ollama",
     "Ollama Models": "Ollamaモデル",
     "One API": "1つのAPI",
+    "ONE app composite multipliers": "ONE アプリの複合倍率",
     "One domain per line": "1行に1つのドメイン",
     "One domain per line (only used when domain restriction is enabled)": "1行に1つのドメイン (ドメイン制限が有効な場合のみ使用されます)",
     "One IP or CIDR range per line": "1行に1つのIPまたはCIDR範囲",
@@ -7352,6 +7356,7 @@
     "When performance monitoring is enabled and system resource usage exceeds the set threshold, new Relay requests will be rejected.": "パフォーマンス監視を有効にすると、システムリソース使用率が閾値を超えた場合、新しいRelayリクエストが拒否されます。",
     "When running in containers or ephemeral environments, ensure the SQLite file is mapped to persistent storage to avoid data loss on restart.": "コンテナまたは一時的な環境で実行する場合、再起動時のデータ損失を防ぐために、SQLiteファイルが永続ストレージにマッピングされていることを確認してください。",
     "When the primary domain changes, the previous domain is automatically kept in the compatible domains list.": "メインドメインを変更すると、以前のドメインは互換用ドメイン一覧に自動的に保持されます。",
+    "When using models through <apps>ONE apps</apps>, final billing multiplier = app composite multiplier × the multiplier of the group used in the model list below.": "<apps>ONE アプリ</apps>経由でモデルを使用する場合、最終的な課金倍率 = アプリの複合倍率 × 下のモデル一覧で実際に使用するグループの倍率です。",
     "Whitelist": "ホワイトリスト",
     "Whitelist (Only allow listed domains)": "ホワイトリスト (リストされたドメインのみを許可)",
     "Whitelist (Only allow listed IPs)": "ホワイトリスト (リストされたIPのみを許可)",
@@ -7431,8 +7436,6 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム",
-    "By clicking sign in, you agree to our": "サインインをクリックすると、以下に同意したことになります：",
-    "By creating an account, you agree to our": "アカウントを作成すると、以下に同意したことになります："
+    "Zoom": "ズーム"
   }
 }

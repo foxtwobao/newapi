@@ -971,6 +971,8 @@
     "Bulk actions for {{count}} selected records": "Thao tác hàng loạt cho {{count}} bản ghi đã chọn",
     "by": "by",
     "By category": "Theo danh mục",
+    "By clicking sign in, you agree to our": "Bằng cách nhấp đăng nhập, bạn đồng ý với",
+    "By creating an account, you agree to our": "Bằng cách tạo tài khoản, bạn đồng ý với",
     "By model author": "Theo nhà phát triển mô hình",
     "By quota": "Theo hạn ngạch",
     "By requests": "Theo số yêu cầu",
@@ -1962,6 +1964,7 @@
     "Dify": "Dify",
     "Dify channels only support chatflow and agent, and agent does not support images": "Kênh Dify chỉ hỗ trợ chatflow và agent, và agent không hỗ trợ hình ảnh",
     "Digest:": "Tóm tắt:",
+    "Direct TokenONE API calls are billed using only the model group multiplier, without the app composite multiplier.": "Khi gọi trực tiếp API TokenONE, chỉ áp dụng hệ số nhóm mô hình, không nhân thêm hệ số kết hợp của ứng dụng.",
     "Direction": "Hướng",
     "Directory File Count": "Số tệp trong thư mục",
     "Directory Total Size": "Tổng dung lượng thư mục",
@@ -4334,6 +4337,7 @@
     "Ollama": "Ollama",
     "Ollama Models": "Mô hình Ollama",
     "One API": "Một API",
+    "ONE app composite multipliers": "Hệ số kết hợp của ứng dụng ONE",
     "One domain per line": "Một tên miền mỗi dòng",
     "One domain per line (only used when domain restriction is enabled)": "Mỗi dòng một tên miền (chỉ được sử dụng khi hạn chế tên miền được bật)",
     "One IP or CIDR range per line": "Một IP hoặc dải CIDR mỗi dòng",
@@ -7352,6 +7356,7 @@
     "When performance monitoring is enabled and system resource usage exceeds the set threshold, new Relay requests will be rejected.": "Khi giám sát hiệu suất được bật và mức sử dụng tài nguyên vượt quá ngưỡng, các yêu cầu Relay mới sẽ bị từ chối.",
     "When running in containers or ephemeral environments, ensure the SQLite file is mapped to persistent storage to avoid data loss on restart.": "Khi chạy trong container hoặc môi trường tạm thời, hãy đảm bảo tệp SQLite được ánh xạ vào bộ nhớ lưu trữ bền vững để tránh mất dữ liệu khi khởi động lại.",
     "When the primary domain changes, the previous domain is automatically kept in the compatible domains list.": "Khi đổi tên miền chính, tên miền cũ sẽ tự động được giữ trong danh sách tên miền tương thích.",
+    "When using models through <apps>ONE apps</apps>, final billing multiplier = app composite multiplier × the multiplier of the group used in the model list below.": "Khi dùng mô hình qua <apps>ứng dụng ONE</apps>, hệ số tính phí cuối cùng = hệ số kết hợp của ứng dụng × hệ số của nhóm được dùng trong danh sách mô hình bên dưới.",
     "Whitelist": "Danh sách trắng",
     "Whitelist (Only allow listed domains)": "Danh sách trắng (Chỉ cho phép các tên miền được liệt kê)",
     "Whitelist (Only allow listed IPs)": "Danh sách trắng (Chỉ cho phép các IP đã liệt kê)",
@@ -7431,8 +7436,6 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "By clicking sign in, you agree to our": "Bằng cách nhấp đăng nhập, bạn đồng ý với",
-    "By creating an account, you agree to our": "Bằng cách tạo tài khoản, bạn đồng ý với"
+    "Zoom": "Zoom"
   }
 }

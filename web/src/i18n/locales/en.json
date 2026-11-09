@@ -971,6 +971,8 @@
     "Bulk actions for {{count}} selected records": "Bulk actions for {{count}} selected records",
     "by": "by",
     "By category": "By category",
+    "By clicking sign in, you agree to our": "By clicking sign in, you agree to our",
+    "By creating an account, you agree to our": "By creating an account, you agree to our",
     "By model author": "By model author",
     "By quota": "By quota",
     "By requests": "By requests",
@@ -1962,6 +1964,7 @@
     "Dify": "Dify",
     "Dify channels only support chatflow and agent, and agent does not support images": "Dify channels only support chatflow and agent, and agent does not support images",
     "Digest:": "Digest:",
+    "Direct TokenONE API calls are billed using only the model group multiplier, without the app composite multiplier.": "Direct TokenONE API calls are billed using only the model group multiplier, without the app composite multiplier.",
     "Direction": "Direction",
     "Directory File Count": "Directory File Count",
     "Directory Total Size": "Directory Total Size",
@@ -4334,6 +4337,7 @@
     "Ollama": "Ollama",
     "Ollama Models": "Ollama Models",
     "One API": "One API",
+    "ONE app composite multipliers": "ONE app composite multipliers",
     "One domain per line": "One domain per line",
     "One domain per line (only used when domain restriction is enabled)": "One domain per line (only used when domain restriction is enabled)",
     "One IP or CIDR range per line": "One IP or CIDR range per line",
@@ -7352,6 +7356,7 @@
     "When performance monitoring is enabled and system resource usage exceeds the set threshold, new Relay requests will be rejected.": "When performance monitoring is enabled and system resource usage exceeds the set threshold, new Relay requests will be rejected.",
     "When running in containers or ephemeral environments, ensure the SQLite file is mapped to persistent storage to avoid data loss on restart.": "When running in containers or ephemeral environments, ensure the SQLite file is mapped to persistent storage to avoid data loss on restart.",
     "When the primary domain changes, the previous domain is automatically kept in the compatible domains list.": "When the primary domain changes, the previous domain is automatically kept in the compatible domains list.",
+    "When using models through <apps>ONE apps</apps>, final billing multiplier = app composite multiplier × the multiplier of the group used in the model list below.": "When using models through <apps>ONE apps</apps>, final billing multiplier = app composite multiplier × the multiplier of the group used in the model list below.",
     "Whitelist": "Whitelist",
     "Whitelist (Only allow listed domains)": "Whitelist (Only allow listed domains)",
     "Whitelist (Only allow listed IPs)": "Whitelist (Only allow listed IPs)",
@@ -7431,8 +7436,6 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "By clicking sign in, you agree to our": "By clicking sign in, you agree to our",
-    "By creating an account, you agree to our": "By creating an account, you agree to our"
+    "Zoom": "Zoom"
   }
 }

@@ -971,6 +971,8 @@
     "Bulk actions for {{count}} selected records": "Групповые действия для {{count}} записей",
     "by": "от",
     "By category": "По категориям",
+    "By clicking sign in, you agree to our": "Нажимая «Войти», вы соглашаетесь с нашими",
+    "By creating an account, you agree to our": "Создавая аккаунт, вы соглашаетесь с нашими",
     "By model author": "По автору модели",
     "By quota": "По квоте",
     "By requests": "По запросам",
@@ -1962,6 +1964,7 @@
     "Dify": "Dify",
     "Dify channels only support chatflow and agent, and agent does not support images": "Каналы Dify поддерживают только chatflow и agent, а agent не поддерживает изображения",
     "Digest:": "Дайджест:",
+    "Direct TokenONE API calls are billed using only the model group multiplier, without the app composite multiplier.": "Прямые вызовы API TokenONE тарифицируются только с множителем группы моделей, без составного множителя приложения.",
     "Direction": "Направление",
     "Directory File Count": "Файлов в каталоге",
     "Directory Total Size": "Общий размер каталога",
@@ -4334,6 +4337,7 @@
     "Ollama": "Ollama",
     "Ollama Models": "Ollama Модели",
     "One API": "Один API",
+    "ONE app composite multipliers": "Составные множители приложений ONE",
     "One domain per line": "Один домен на строку",
     "One domain per line (only used when domain restriction is enabled)": "Один домен на строку (используется только при включении ограничения домена)",
     "One IP or CIDR range per line": "Один IP или диапазон CIDR на строку",
@@ -7352,6 +7356,7 @@
     "When performance monitoring is enabled and system resource usage exceeds the set threshold, new Relay requests will be rejected.": "Когда мониторинг включён и использование ресурсов превышает порог, новые Relay-запросы будут отклонены.",
     "When running in containers or ephemeral environments, ensure the SQLite file is mapped to persistent storage to avoid data loss on restart.": "При работе в контейнерах или эфемерных средах убедитесь, что файл SQLite сопоставлен с постоянным хранилищем, чтобы избежать потери данных при перезапуске.",
     "When the primary domain changes, the previous domain is automatically kept in the compatible domains list.": "При изменении основного домена прежний домен автоматически сохраняется в списке совместимых доменов.",
+    "When using models through <apps>ONE apps</apps>, final billing multiplier = app composite multiplier × the multiplier of the group used in the model list below.": "При использовании моделей через <apps>приложения ONE</apps> итоговый множитель тарификации = составной множитель приложения × множитель используемой группы из списка моделей ниже.",
     "Whitelist": "Белый список",
     "Whitelist (Only allow listed domains)": "Белый список (Разрешить только указанные домены)",
     "Whitelist (Only allow listed IPs)": "Белый список (Разрешить только указанные IP-адреса)",
@@ -7431,8 +7436,6 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "By clicking sign in, you agree to our": "Нажимая «Войти», вы соглашаетесь с нашими",
-    "By creating an account, you agree to our": "Создавая аккаунт, вы соглашаетесь с нашими"
+    "Zoom": "Zoom"
   }
 }

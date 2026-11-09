@@ -49,6 +49,7 @@ it('shows ordered composite price paths with their final multipliers and hides u
   const user = userEvent.setup()
   render(
     <CompositePricing
+      mode='details'
       groups={[
         {
           name: 'PPTONE',
