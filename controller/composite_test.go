@@ -870,7 +870,8 @@ func TestCompositeRealtimeIncrementalQuotaUsesSnapshot(t *testing.T) {
 		require.NoError(t, model.UpdateOption("GroupRatio", `{"default":1,"GPT":2,"IMAGE":3,"PPTONE":4}`))
 		usage := &dto.RealtimeUsage{InputTokens: 1000}
 		usage.InputTokenDetails.TextTokens = 1000
-		require.NoError(t, service.PreWssConsumeQuota(c, info, usage))
+		_, err = service.PreWssConsumeQuota(c, info, usage)
+		require.NoError(t, err)
 		c.Status(http.StatusOK)
 	})
 	request := httptest.NewRequest(http.MethodGet, "/v1/realtime?model=gpt-5.6", nil)
